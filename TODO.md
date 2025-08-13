@@ -8,6 +8,7 @@ Status snapshot (current code):
 - Raw payload passthrough, no FIX tag-value parsing/validation
 - Minimal `Session` abstraction and callbacks
 - Placeholder message types/encoding in `src/messages/`
+- Basic typed admin messages generated at build time (`src/messages/generated.rs`); client exposes `Session::send_admin` and inbound `InboundMessage::admin()`
 
 ## 0. Foundations and hygiene
 - [ ] Establish MSRV and enable CI (fmt, clippy, tests, docs build)
@@ -38,11 +39,12 @@ Implement minimal FIX 4.x session protocol to support logon→heartbeat/test→l
 ## 3. Message Codec Generation
 Generate zero-copy codecs from FIX XML dictionaries, replacing placeholders in `src/messages/`.
 - [ ] New crate: `fixg-codegen`
-  - [ ] Parse FIX/FIXT XML dictionaries
-  - [ ] Generate Rust types for fields/components/messages
-  - [ ] Outbound builders that produce `bytes::Bytes` without intermediate allocations
-  - [ ] Inbound decoders over `&[u8]`/`Bytes` with zero-copy field views
-  - [ ] Build integration via `build.rs` or standalone `codegen` binary
+- [ ] Parse FIX/FIXT XML dictionaries
+- [ ] Generate Rust types for fields/components/messages
+- [ ] Outbound builders that produce `bytes::Bytes` without intermediate allocations
+- [ ] Inbound decoders over `&[u8]`/`Bytes` with zero-copy field views
+- [x] Build integration via `build.rs` or standalone `codegen` binary
+- [x] Initial generated admin messages and typed conversions (`build.rs` -> `src/messages/generated.rs`)
 - [ ] Validation constraints per dictionary (required fields, value ranges)
 - [ ] Property-based tests with golden messages (round-trip encode/decode)
 - [ ] Replace `src/messages/*` placeholders with generated code
@@ -82,6 +84,7 @@ Adopt Aeron channels for IPC/UDP and enable distributed deployment.
 - [ ] Current-thread runtime option and guidance for latency-sensitive apps
 - [ ] Explicit backpressure APIs and error surfaces for `Session::send`
 - [ ] Typed message APIs using generated codecs; deprecate raw payload paths from hot code
+- [x] Basic typed admin message APIs: `Session::send_admin`, inbound `InboundMessage::admin()`
 - [ ] Rich error types (`thiserror`) and actionable diagnostics
 
 ## 9. Security and TLS
@@ -123,7 +126,7 @@ Adopt Aeron channels for IPC/UDP and enable distributed deployment.
 
 ### Suggested Milestones
 - M1: Session MVP (1,2) + Example initiator/acceptor demo
-- M2: Generated codecs (3) + Typed message send/receive
+- M2: Generated codecs (3) + Typed message send/receive — initial admin-only support implemented; full dictionary-based codegen pending
 - M3: Persistence/replay (4) + Robust resend handling
 - M4: Engine↔Library abstraction (5) + Aeron prototype (6)
 - M5: HA with Aeron Cluster (7) + hardening (8–12)

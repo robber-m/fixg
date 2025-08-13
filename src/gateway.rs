@@ -10,6 +10,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{self, Duration, Instant};
 
 use crate::protocol::{self, FixMsgType};
+use crate::messages::AdminMessage;
+use crate::session::OutboundPayload;
 
 #[derive(Debug, Clone)]
 pub struct GatewayHandle {
@@ -49,7 +51,7 @@ impl Gateway {
                             let to_client_tx_clone = to_client_tx.clone();
                             let next_id = Arc::clone(&next_session_id);
                             tokio::spawn(async move {
-                                let mut session_senders: HashMap<u64, mpsc::Sender<Bytes>> = HashMap::new();
+                                let mut session_senders: HashMap<u64, mpsc::Sender<OutboundPayload>> = HashMap::new();
 
                                 while let Some(cc) = from_client_rx.recv().await {
                                     match cc {
@@ -61,7 +63,7 @@ impl Gateway {
                                                     let (mut read_half, write_half) = stream.into_split();
 
                                                     // Create channel for application-driven outbound payloads to this session task
-                                                    let (app_out_tx, mut app_out_rx) = mpsc::channel::<Bytes>(1024);
+                                                    let (app_out_tx, mut app_out_rx) = mpsc::channel::<OutboundPayload>(1024);
                                                     session_senders.insert(session_id, app_out_tx.clone());
 
                                                     // Spawn session task owning write half, performing handshake, timers, and parsing
@@ -93,7 +95,18 @@ impl Gateway {
                                                                 // Application outbound payloads
                                                                 maybe_out = app_out_rx.recv() => {
                                                                     if let Some(payload) = maybe_out {
-                                                                        let _ = write_half.write_all(&payload).await;
+                                                                        match payload {
+                                                                            OutboundPayload::Raw(bytes) => {
+                                                                                let _ = write_half.write_all(&bytes).await;
+                                                                            }
+                                                                            OutboundPayload::Admin(msg) => {
+                                                                                let mut fix = msg.into_fix(&sender_comp_id, &target_comp_id);
+                                                                                fix.set_field(34, out_seq_num.to_string());
+                                                                                out_seq_num += 1;
+                                                                                let bytes = protocol::encode(fix);
+                                                                                let _ = write_half.write_all(&bytes).await;
+                                                                            }
+                                                                        }
                                                                     } else {
                                                                         break;
                                                                     }
@@ -221,7 +234,12 @@ impl Gateway {
                                         }
                                         ClientCommand::Send { session_id, payload } => {
                                             if let Some(tx) = session_senders.get_mut(&session_id) {
-                                                let _ = tx.send(payload).await;
+                                                let _ = tx.send(OutboundPayload::Raw(payload)).await;
+                                            }
+                                        }
+                                        ClientCommand::SendAdmin { session_id, msg, .. } => {
+                                            if let Some(tx) = session_senders.get_mut(&session_id) {
+                                                let _ = tx.send(OutboundPayload::Admin(msg)).await;
                                             }
                                         }
                                     }
@@ -277,6 +295,7 @@ pub enum GatewayCommand {
 pub enum ClientCommand {
     InitiateSession { host: String, port: u16, sender_comp_id: String, target_comp_id: String, heartbeat_interval_secs: u32, respond_to: oneshot::Sender<SessionHandle> },
     Send { session_id: u64, payload: Bytes },
+    SendAdmin { session_id: u64, msg: AdminMessage, sender_comp_id: String, target_comp_id: String },
 }
 
 #[derive(Debug, Clone, Copy)]

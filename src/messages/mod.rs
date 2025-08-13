@@ -1,5 +1,8 @@
 use bytes::{Bytes, BytesMut};
 
+pub mod generated;
+pub use generated::AdminMessage;
+
 #[derive(Debug, Clone)]
 pub struct Logon;
 

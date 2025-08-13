@@ -5,6 +5,7 @@ edition = "2021"
 description = "fixg: A high-performance, async FIX engine and client library in Rust"
 license = "Apache-2.0 OR MIT"
 repository = "https://example.com/fixg"
+build = "build.rs"
 
 [dependencies]
 tokio = { version = "1.47.1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }

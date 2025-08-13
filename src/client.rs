@@ -1,20 +1,24 @@
 use crate::config::FixClientConfig;
 use crate::error::{FixgError, Result};
 use crate::gateway::{GatewayHandle, GatewayToClientEvent, GatewayClientCommand, GatewaySessionHandle};
-use crate::session::{new_session, DisconnectReason, Session, SessionConfig};
+use crate::session::{new_session, DisconnectReason, Session, SessionConfig, OutboundPayload};
 use async_trait::async_trait;
 use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot};
+use crate::messages::AdminMessage;
+use crate::protocol;
 
 #[derive(Debug)]
 pub struct InboundMessage {
     msg_type: String,
     payload: Bytes,
+    admin: Option<AdminMessage>,
 }
 
 impl InboundMessage {
     pub fn msg_type(&self) -> &str { &self.msg_type }
     pub fn body(&self) -> &Bytes { &self.payload }
+    pub fn admin(&self) -> Option<&AdminMessage> { self.admin.as_ref() }
 }
 
 #[async_trait]
@@ -59,14 +63,30 @@ impl FixClient {
 
         let session_id = handle.session_id;
         let cmd_tx = self.cmd_tx.clone();
+        let sender_comp_id = cfg.sender_comp_id.clone();
+        let target_comp_id = cfg.target_comp_id.clone();
         let (session, mut out_rx) = new_session(session_id);
 
         // Route outbound payloads to gateway with session id
         tokio::spawn(async move {
             while let Some(payload) = out_rx.recv().await {
-                let _ = cmd_tx
-                    .send(GatewayClientCommand::Send { session_id, payload })
-                    .await;
+                match payload {
+                    OutboundPayload::Raw(bytes) => {
+                        let _ = cmd_tx
+                            .send(GatewayClientCommand::Send { session_id, payload: bytes })
+                            .await;
+                    }
+                    OutboundPayload::Admin(msg) => {
+                        let _ = cmd_tx
+                            .send(GatewayClientCommand::SendAdmin {
+                                session_id,
+                                msg,
+                                sender_comp_id: sender_comp_id.clone(),
+                                target_comp_id: target_comp_id.clone(),
+                            })
+                            .await;
+                    }
+                }
             }
         });
 
@@ -88,8 +108,13 @@ impl FixClient {
                 }
                 GatewayToClientEvent::InboundMessage { session_id: _, msg_type, payload } => {
                     if let Some(ref session) = self.current_session {
+                        // Try to parse typed admin message
+                        let admin = match protocol::decode(&payload) {
+                            Ok(ref m) => AdminMessage::try_from(m).ok(),
+                            Err(_) => None,
+                        };
                         handler
-                            .on_message(session, InboundMessage { msg_type, payload })
+                            .on_message(session, InboundMessage { msg_type, payload, admin })
                             .await;
                     }
                 }
