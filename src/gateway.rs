@@ -94,13 +94,7 @@ impl Gateway {
                                                         out_seq_num += 1;
                                                         let logon_bytes = protocol::encode(logon);
                                                         let _ = write_half.write_all(&logon_bytes).await;
-                                                        let _ = store.append(StoredMessageRecord {
-                                                            session: sess_key.clone(),
-                                                            direction: Direction::Outbound,
-                                                            seq: Some(seq_for_store),
-                                                            ts_millis: now_millis(),
-                                                            payload_b64: base64::encode(logon_bytes.as_ref()),
-                                                        }).await;
+                                                        let _ = store.append_bytes(&sess_key, Direction::Outbound, Some(seq_for_store), now_millis(), logon_bytes.as_ref()).await;
 
                                                         // Timers
                                                         let mut interval = time::interval(hb_interval);
@@ -117,13 +111,7 @@ impl Gateway {
                                                                         match payload {
                                                                             OutboundPayload::Raw(bytes) => {
                                                                                 let _ = write_half.write_all(&bytes).await;
-                                                                                let _ = store.append(StoredMessageRecord {
-                                                                                    session: sess_key.clone(),
-                                                                                    direction: Direction::Outbound,
-                                                                                    seq: None,
-                                                                                    ts_millis: now_millis(),
-                                                                                    payload_b64: base64::encode(bytes.as_ref()),
-                                                                                }).await;
+                                                                                let _ = store.append_bytes(&sess_key, Direction::Outbound, None, now_millis(), bytes.as_ref()).await;
                                                                             }
                                                                             OutboundPayload::Admin(msg) => {
                                                                                 let mut fix = msg.into_fix(&sender_comp_id, &target_comp_id);
@@ -132,13 +120,7 @@ impl Gateway {
                                                                                 out_seq_num += 1;
                                                                                 let bytes = protocol::encode(fix);
                                                                                 let _ = write_half.write_all(&bytes).await;
-                                                                                let _ = store.append(StoredMessageRecord {
-                                                                                    session: sess_key.clone(),
-                                                                                    direction: Direction::Outbound,
-                                                                                    seq: Some(seq_for_store),
-                                                                                    ts_millis: now_millis(),
-                                                                                    payload_b64: base64::encode(bytes.as_ref()),
-                                                                                }).await;
+                                                                                let _ = store.append_bytes(&sess_key, Direction::Outbound, Some(seq_for_store), now_millis(), bytes.as_ref()).await;
                                                                             }
                                                                         }
                                                                     } else {
@@ -166,13 +148,7 @@ impl Gateway {
                                                                                         }
                                                                                         // Journal inbound
                                                                                         let inbound_seq = msg.fields.get(&34).and_then(|s| s.parse::<u32>().ok());
-                                                                                        let _ = store.append(StoredMessageRecord {
-                                                                                            session: sess_key.clone(),
-                                                                                            direction: Direction::Inbound,
-                                                                                            seq: inbound_seq,
-                                                                                            ts_millis: now_millis(),
-                                                                                            payload_b64: base64::encode(msg_bytes.as_ref()),
-                                                                                        }).await;
+                                                                                        let _ = store.append_bytes(&sess_key, Direction::Inbound, inbound_seq, now_millis(), msg_bytes.as_ref()).await;
 
                                                                                         match msg.msg_type {
                                                                                             FixMsgType::Logon => {
@@ -195,13 +171,7 @@ impl Gateway {
                                                                                                 out_seq_num += 1;
                                                                                                 let hb_bytes = protocol::encode(hb);
                                                                                                 let _ = write_half.write_all(&hb_bytes).await;
-                                                                                                let _ = store.append(StoredMessageRecord {
-                                                                                                    session: sess_key.clone(),
-                                                                                                    direction: Direction::Outbound,
-                                                                                                    seq: Some(seq_for_store),
-                                                                                                    ts_millis: now_millis(),
-                                                                                                    payload_b64: base64::encode(hb_bytes.as_ref()),
-                                                                                                }).await;
+                                                                                                let _ = store.append_bytes(&sess_key, Direction::Outbound, Some(seq_for_store), now_millis(), hb_bytes.as_ref()).await;
                                                                                             }
                                                                                             FixMsgType::ResendRequest => {
                                                                                                 let begin = msg.fields.get(&7).and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
@@ -228,13 +198,7 @@ impl Gateway {
                                                                                                 out_seq_num += 1;
                                                                                                 let lo_bytes = protocol::encode(lo);
                                                                                                 let _ = write_half.write_all(&lo_bytes).await;
-                                                                                                let _ = store.append(StoredMessageRecord {
-                                                                                                    session: sess_key.clone(),
-                                                                                                    direction: Direction::Outbound,
-                                                                                                    seq: Some(seq_for_store),
-                                                                                                    ts_millis: now_millis(),
-                                                                                                    payload_b64: base64::encode(lo_bytes.as_ref()),
-                                                                                                }).await;
+                                                                                                let _ = store.append_bytes(&sess_key, Direction::Outbound, Some(seq_for_store), now_millis(), lo_bytes.as_ref()).await;
                                                                                                 let _ = to_client_tx_reader
                                                                                                     .send(GatewayEvent::Disconnected { session_id, reason: DisconnectReason::ApplicationRequested })
                                                                                                     .await;
@@ -282,13 +246,7 @@ impl Gateway {
                                                                             out_seq_num += 1;
                                                                             let tr_bytes = protocol::encode(tr);
                                                                             let _ = write_half.write_all(&tr_bytes).await;
-                                                                            let _ = store.append(StoredMessageRecord {
-                                                                                session: sess_key.clone(),
-                                                                                direction: Direction::Outbound,
-                                                                                seq: Some(seq_for_store),
-                                                                                ts_millis: now_millis(),
-                                                                                payload_b64: base64::encode(tr_bytes.as_ref()),
-                                                                            }).await;
+                                                                            let _ = store.append_bytes(&sess_key, Direction::Outbound, Some(seq_for_store), now_millis(), tr_bytes.as_ref()).await;
                                                                             test_req_outstanding = Some(tr_id);
                                                                         }
                                                                     } else if idle >= hb_interval {
@@ -298,13 +256,7 @@ impl Gateway {
                                                                         out_seq_num += 1;
                                                                         let hb_bytes = protocol::encode(hb);
                                                                         let _ = write_half.write_all(&hb_bytes).await;
-                                                                        let _ = store.append(StoredMessageRecord {
-                                                                            session: sess_key.clone(),
-                                                                            direction: Direction::Outbound,
-                                                                            seq: Some(seq_for_store),
-                                                                            ts_millis: now_millis(),
-                                                                            payload_b64: base64::encode(hb_bytes.as_ref()),
-                                                                        }).await;
+                                                                        let _ = store.append_bytes(&sess_key, Direction::Outbound, Some(seq_for_store), now_millis(), hb_bytes.as_ref()).await;
                                                                     }
                                                                 }
                                                             }
