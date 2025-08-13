@@ -4,6 +4,7 @@ use libc::{c_char, c_int, c_longlong, c_void};
 use std::ffi::CString;
 use std::ptr::null_mut;
 use std::time::{Duration, Instant};
+use std::thread::sleep;
 
 #[allow(non_camel_case_types)]
 pub type aeron_context_t = c_void;
@@ -124,6 +125,20 @@ impl Publication {
                 return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("offer failed: {}", res)));
             }
             Ok(res as i64)
+        }
+    }
+
+    pub fn offer_retry(&self, data: &[u8], max_retries: usize, backoff_ms: u64, fragment_limit: i32) -> std::io::Result<i64> {
+        let mut tries = 0;
+        loop {
+            match self.offer(data) {
+                Ok(n) => return Ok(n),
+                Err(e) => {
+                    tries += 1;
+                    if tries >= max_retries { return Err(e); }
+                    sleep(Duration::from_millis(backoff_ms));
+                }
+            }
         }
     }
 }

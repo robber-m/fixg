@@ -72,6 +72,7 @@ impl Default for StorageConfig {
 #[async_trait]
 pub trait MessageStore: Send + Sync + 'static {
     async fn append(&self, record: StoredMessageRecord) -> std::io::Result<()>;
+    async fn append_bytes(&self, session: &SessionKey, direction: Direction, seq: Option<u32>, ts_millis: u64, payload: &[u8]) -> std::io::Result<()>;
     async fn load_outbound_range(&self, session: &SessionKey, begin_seq: u32, end_seq: u32) -> std::io::Result<Vec<Bytes>>;
     async fn last_outbound_seq(&self, session: &SessionKey) -> std::io::Result<Option<u32>>;
 }
@@ -114,23 +115,26 @@ impl AeronMessageStore {
 #[async_trait]
 impl MessageStore for AeronMessageStore {
     async fn append(&self, record: StoredMessageRecord) -> std::io::Result<()> {
-        // Only persist outbound messages with seq numbers for replay
-        if record.direction == Direction::Outbound {
-            if let Some(seq) = record.seq {
-                if let Ok(bytes) = base64::decode(&record.payload_b64) {
-                    // Publish raw FIX bytes on data stream
-                    let _ = self.data_pub.offer(&bytes)?;
-                    // Publish index frame on index stream
-                    let idx = Self::encode_index_frame(seq, &bytes);
-                    let _ = self.index_pub.offer(&idx)?;
-                }
+        // Fallback to bytes path if possible
+        if let Ok(bytes) = base64::decode(&record.payload_b64) {
+            self.append_bytes(&record.session, record.direction, record.seq, record.ts_millis, &bytes).await
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn append_bytes(&self, _session: &SessionKey, direction: Direction, seq: Option<u32>, _ts_millis: u64, payload: &[u8]) -> std::io::Result<()> {
+        if direction == Direction::Outbound {
+            if let Some(s) = seq {
+                let _ = self.data_pub.offer_retry(payload, 10, 100, 1)?;
+                let idx = Self::encode_index_frame(s, payload);
+                let _ = self.index_pub.offer_retry(&idx, 10, 100, 1)?;
             }
         }
         Ok(())
     }
 
     async fn load_outbound_range(&self, _session: &SessionKey, begin_seq: u32, end_seq: u32) -> std::io::Result<Vec<Bytes>> {
-        // Poll index stream briefly and filter by seq range
         let frags = self.index_sub.poll_collect(100, 25);
         let mut out: Vec<(u32, Bytes)> = Vec::new();
         for f in frags.into_iter() {
@@ -237,6 +241,17 @@ async fn flush_batch(cfg: &StorageConfig, queue: &mut VecDeque<StoredMessageReco
 impl MessageStore for FileMessageStore {
     async fn append(&self, record: StoredMessageRecord) -> std::io::Result<()> {
         self.tx.send(record).await.map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "storage channel closed"))
+    }
+
+    async fn append_bytes(&self, session: &SessionKey, direction: Direction, seq: Option<u32>, ts_millis: u64, payload: &[u8]) -> std::io::Result<()> {
+        let rec = StoredMessageRecord {
+            session: session.clone(),
+            direction,
+            seq,
+            ts_millis,
+            payload_b64: base64::encode(payload),
+        };
+        self.append(rec).await
     }
 
     async fn load_outbound_range(&self, session: &SessionKey, begin_seq: u32, end_seq: u32) -> std::io::Result<Vec<Bytes>> {
