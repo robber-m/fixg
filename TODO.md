@@ -9,6 +9,7 @@ Status snapshot (current code):
 - Minimal `Session` abstraction and callbacks
 - Placeholder message types/encoding in `src/messages/`
 - Basic typed admin messages generated at build time (`src/messages/generated.rs`); client exposes `Session::send_admin` and inbound `InboundMessage::admin()`
+- Persistence: file-backed JSONL journal with index; pluggable storage backend and early Aeron FFI support behind `aeron-ffi` feature (data/index streams)
 
 ## 0. Foundations and hygiene
 - [ ] Establish MSRV and enable CI (fmt, clippy, tests, docs build)
@@ -51,9 +52,9 @@ Generate zero-copy codecs from FIX XML dictionaries, replacing placeholders in `
 
 ## 4. Persistence and Replay
 Satisfy resend/replay requirements and recovery after restarts.
-- [ ] Define storage abstraction (trait) for message journaling and indexing
-- [ ] Implement a file-backed append-only log with an index for quick lookup
-- [ ] Persist inbound/outbound messages with sequence numbers and timestamps
+- [x] Define storage abstraction (trait) for message journaling and indexing
+- [x] Implement a file-backed append-only log with an index for quick lookup
+- [x] Persist inbound/outbound messages with sequence numbers and timestamps
 - [ ] Implement ResendRequest/SequenceReset (GapFill and Fill) flows
 - [ ] Recovery on restart (hydrate session state and seq nums)
 - [ ] End-of-day logic (logout/reset policies)
@@ -67,10 +68,11 @@ Separate concerns and prepare for local IPC and remote UDP.
 
 ## 6. Aeron Integration
 Adopt Aeron channels for IPC/UDP and enable distributed deployment.
-- [ ] Evaluate `aeron-rs` vs. FFI binding (licensing, maintenance, performance)
-- [ ] Implement Publication/Subscription mapping to Engine↔Library protocol
-- [ ] Configure channels (ipc vs udp?endpoint=host:port) via `GatewayConfig`
-- [ ] Handle backpressure (offer/poll) and idle strategies
+- [x] Feature-gated FFI scaffolding (`aeron-ffi`) and safe wrapper for Publication/Subscription
+- [x] Storage backend switch: `StorageBackend::Aeron { archive_channel, stream_id }`
+- [x] Initial persistence via Aeron: publish raw FIX bytes on a data stream and seq-index frames on a paired index stream
+- [ ] Replace ad-hoc index polling with Aeron Archive control/replay for precise range playback
+- [ ] Backpressure handling with idle/backoff strategies and metrics on offer/poll
 - [ ] Diagnostic tooling: counters, stream inspection
 
 ## 7. High Availability (Aeron Cluster)
@@ -127,8 +129,8 @@ Adopt Aeron channels for IPC/UDP and enable distributed deployment.
 ### Suggested Milestones
 - M1: Session MVP (1,2) + Example initiator/acceptor demo
 - M2: Generated codecs (3) + Typed message send/receive — initial admin-only support implemented; full dictionary-based codegen pending
-- M3: Persistence/replay (4) + Robust resend handling
-- M4: Engine↔Library abstraction (5) + Aeron prototype (6)
+- M3: Persistence/replay (4) + Robust resend handling — file store, storage trait, and early Aeron FFI persistence landed
+- M4: Engine↔Library abstraction (5) + Aeron Archive replay (6) — replace index polling with Archive control API, add backpressure metrics
 - M5: HA with Aeron Cluster (7) + hardening (8–12)
 
 ### Open Questions/Risks
@@ -137,57 +139,5 @@ Adopt Aeron channels for IPC/UDP and enable distributed deployment.
 - Storage format (custom vs. interoperable) and ops tooling
 - Allocation budgets and zero-copy boundaries across modules
 
-## M2→M3 Hardening Plan (appended)
-
-To evolve from the initial typed admin messages and minimal journaling/resend into the robust architecture in `DESIGN.md`, target the following increments:
-
-- Storage robustness
-  - Define a pluggable `MessageStore` trait with backpressure-aware write path and batching.
-  - Provide fsync and durability policies (always, interval, disabled) with metrics.
-  - Introduce per-session rotating segments with index files for O(log n) lookups; memory-map indexes.
-  - Add corruption detection and recovery tooling (checksum, verifier CLI, truncate/repair on startup).
-  - Support compaction and archival; document retention policies and disk quotas.
-
-- Sequence numbers and recovery
-  - Persist last known seq numbers and last logon state; reload on restart.
-  - Implement full resend semantics including handling 16=0 (infinite) and chunked replays.
-  - Implement SequenceReset GapFill and Fill flows with correct range accounting and idempotency.
-  - Detect and suppress duplicates during replay using journal index.
-
-- Protocol correctness
-  - Enforce sending times (52) and OrigSendingTime (122) on resends; validate PossDupFlag (43) and PossResend (97).
-  - Validate required headers per dictionary; configurable BeginString and ApplVerID where applicable.
-  - Clock skew handling and optional time-source abstraction.
-
-- Typed codecs (beyond admin)
-  - Introduce `fixg-codegen` crate: parse FIX XML, generate fields, components, messages.
-  - Zero-copy decoding over `&[u8]` using field views; avoid allocations in hot path.
-  - Outbound builders produce `Bytes` directly with pre-sized buffers and tag order policy.
-  - Validation constraints from dictionary (Reqd, Enums, min/max) with helpful errors.
-  - Property-based testing with golden fixtures; fuzz decoding.
-
-- Engine↔Library contract
-  - Formalize internal wire protocol for events/commands; version it and add feature-gated transports.
-  - Specify backpressure semantics; introduce bounded queues and observable drops.
-  - Add idle strategies and cooperative scheduling guidance.
-
-- Observability
-  - Add `tracing` spans for I/O, parsing, session transitions, storage ops; include seq nums and session keys.
-  - Export Prometheus metrics: queue depths, resend counts, duplicates suppressed, write latencies, fsync behavior.
-  - Structured logs with message IDs and correlation to journal offsets.
-
-- Testing matrix
-  - Unit tests: parser, encoding, state machine, storage index.
-  - Integration tests: initiator/acceptor with fixture dictionaries; restart/recovery scenarios.
-  - Soak and fault-injection: network partitions, delayed packets, disk full, corruption.
-  - Conformance tests against public FIX endpoints or a harness.
-
-- Performance
-  - Benchmarks for encode/decode, session loop, journaling (batched writes vs fsync), resend throughput.
-  - Lock-free or minimal-lock designs; tune channel sizes and OS buffers.
-  - Allocation tracking and zero-allocation goals on the hot path.
-
-- API ergonomics
-  - Typed application messages; deprecate raw payloads in hot code paths.
-  - Clear error types (`thiserror`), backpressure-aware send API, and current-thread runtime option.
-  - Document best practices for latency-sensitive apps.
+### Plan adjustment (early Aeron support)
+We intentionally pulled forward parts of (6) to unblock realistic persistence: added feature-gated Aeron FFI with pub/sub, and a dual-stream (data/index) approach for basic range replay. Next steps are to migrate to Aeron Archive replay, integrate backpressure/metrics, and keep the file store as the default dev backend.
