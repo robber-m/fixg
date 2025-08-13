@@ -3,6 +3,7 @@
 use libc::{c_char, c_int, c_longlong, c_void};
 use std::ffi::CString;
 use std::ptr::null_mut;
+use std::time::{Duration, Instant};
 
 #[allow(non_camel_case_types)]
 pub type aeron_context_t = c_void;
@@ -49,11 +50,17 @@ extern "C" {
         on_unavailable_image: *const c_void,
     ) -> c_longlong;
     fn aeron_subscription_close(subscription: *mut aeron_subscription_t) -> c_int;
+    fn aeron_subscription_poll(
+        subscription: *mut aeron_subscription_t,
+        handler: Option<extern "C" fn(*mut c_void, *const c_void, c_longlong, *const c_void)>,
+        clientd: *mut c_void,
+        fragment_limit: c_int,
+    ) -> c_int;
 }
 
 pub struct AeronClient {
-    ctx: *mut aeron_context_t,
-    aeron: *mut aeron_t,
+    pub(crate) ctx: *mut aeron_context_t,
+    pub(crate) aeron: *mut aeron_t,
 }
 
 unsafe impl Send for AeronClient {}
@@ -124,5 +131,67 @@ impl Publication {
 impl Drop for Publication {
     fn drop(&mut self) {
         unsafe { let _ = aeron_publication_close(self.pub_ptr); }
+    }
+}
+
+pub struct Subscription {
+    sub_ptr: *mut aeron_subscription_t,
+}
+
+unsafe impl Send for Subscription {}
+unsafe impl Sync for Subscription {}
+
+impl Subscription {
+    pub fn add(aeron: &AeronClient, channel: &str, stream_id: i32) -> std::io::Result<Self> {
+        unsafe {
+            let c = CString::new(channel).unwrap();
+            let mut sub_ptr: *mut aeron_subscription_t = null_mut();
+            let r = aeron_subscription_add(
+                aeron.aeron,
+                &mut sub_ptr,
+                c.as_ptr(),
+                stream_id as c_int,
+                None,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+            );
+            if r < 0 || sub_ptr.is_null() {
+                return Err(std::io::Error::new(std::io::ErrorKind::Other, "aeron_subscription_add failed"));
+            }
+            Ok(Self { sub_ptr })
+        }
+    }
+
+    pub fn poll_collect(&self, max_ms: u64, fragment_limit: i32) -> Vec<Vec<u8>> {
+        extern "C" fn handler(clientd: *mut c_void, buffer: *const c_void, length: c_longlong, _header: *const c_void) {
+            unsafe {
+                let col = &mut *(clientd as *mut Collector);
+                if length > 0 {
+                    let slice = std::slice::from_raw_parts(buffer as *const u8, length as usize);
+                    col.fragments.push(slice.to_vec());
+                    col.count += 1;
+                }
+            }
+        }
+        struct Collector { fragments: Vec<Vec<u8>>, count: usize }
+        let mut col = Collector { fragments: Vec::new(), count: 0 };
+        let start = Instant::now();
+        unsafe {
+            while start.elapsed() < Duration::from_millis(max_ms) {
+                let polled = aeron_subscription_poll(self.sub_ptr, Some(handler), &mut col as *mut _ as *mut c_void, fragment_limit as c_int);
+                if polled < 0 { break; }
+                if polled == 0 {
+                    std::thread::yield_now();
+                }
+            }
+        }
+        col.fragments
+    }
+}
+
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        unsafe { let _ = aeron_subscription_close(self.sub_ptr); }
     }
 }

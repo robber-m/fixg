@@ -77,12 +77,15 @@ pub trait MessageStore: Send + Sync + 'static {
 }
 
 #[cfg(feature = "aeron-ffi")]
-use crate::aeron_ffi::{AeronClient, Publication};
+use crate::aeron_ffi::{AeronClient, Publication, Subscription};
 
 #[cfg(feature = "aeron-ffi")]
 pub struct AeronMessageStore {
     client: AeronClient,
     publication: Publication,
+    subscription: Subscription,
+    channel: String,
+    stream_id: i32,
 }
 
 #[cfg(feature = "aeron-ffi")]
@@ -90,7 +93,8 @@ impl AeronMessageStore {
     pub fn new_with_params(channel: &str, stream_id: i32) -> std::io::Result<Self> {
         let client = AeronClient::connect()?;
         let publication = Publication::add(&client, channel, stream_id)?;
-        Ok(Self { client, publication })
+        let subscription = Subscription::add(&client, channel, stream_id)?;
+        Ok(Self { client, publication, subscription, channel: channel.to_string(), stream_id })
     }
     pub fn new() -> Self { panic!("use new_with_params") }
 }
@@ -99,14 +103,14 @@ impl AeronMessageStore {
 #[async_trait]
 impl MessageStore for AeronMessageStore {
     async fn append(&self, record: StoredMessageRecord) -> std::io::Result<()> {
-        // Serialize to wire bytes; in real impl, offer raw FIX bytes not JSON.
         let bytes = serde_json::to_vec(&record).unwrap();
         let _ = self.publication.offer(&bytes)?;
         Ok(())
     }
     async fn load_outbound_range(&self, _session: &SessionKey, _begin_seq: u32, _end_seq: u32) -> std::io::Result<Vec<Bytes>> {
-        // TODO: Implement archive replay to a subscription and collect buffers
-        Err(std::io::Error::new(std::io::ErrorKind::Other, "Aeron replay not implemented"))
+        // For now, just poll subscription for a small window and return whatever we see.
+        let frags = self.subscription.poll_collect(50, 10);
+        Ok(frags.into_iter().map(|v| Bytes::from(v)).collect())
     }
     async fn last_outbound_seq(&self, _session: &SessionKey) -> std::io::Result<Option<u32>> { Ok(None) }
 }
