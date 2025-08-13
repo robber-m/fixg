@@ -8,6 +8,8 @@ Status snapshot (current code):
 - Raw payload passthrough, no FIX tag-value parsing/validation
 - Minimal `Session` abstraction and callbacks
 - Placeholder message types/encoding in `src/messages/`
+- Basic typed admin messages generated at build time (`src/messages/generated.rs`); client exposes `Session::send_admin` and inbound `InboundMessage::admin()`
+- Persistence: file-backed JSONL journal with index; pluggable storage backend and early Aeron FFI support behind `aeron-ffi` feature (data/index streams)
 
 ## 0. Foundations and hygiene
 - [ ] Establish MSRV and enable CI (fmt, clippy, tests, docs build)
@@ -38,20 +40,21 @@ Implement minimal FIX 4.x session protocol to support logon→heartbeat/test→l
 ## 3. Message Codec Generation
 Generate zero-copy codecs from FIX XML dictionaries, replacing placeholders in `src/messages/`.
 - [ ] New crate: `fixg-codegen`
-  - [ ] Parse FIX/FIXT XML dictionaries
-  - [ ] Generate Rust types for fields/components/messages
-  - [ ] Outbound builders that produce `bytes::Bytes` without intermediate allocations
-  - [ ] Inbound decoders over `&[u8]`/`Bytes` with zero-copy field views
-  - [ ] Build integration via `build.rs` or standalone `codegen` binary
+- [ ] Parse FIX/FIXT XML dictionaries
+- [ ] Generate Rust types for fields/components/messages
+- [ ] Outbound builders that produce `bytes::Bytes` without intermediate allocations
+- [ ] Inbound decoders over `&[u8]`/`Bytes` with zero-copy field views
+- [x] Build integration via `build.rs` or standalone `codegen` binary
+- [x] Initial generated admin messages and typed conversions (`build.rs` -> `src/messages/generated.rs`)
 - [ ] Validation constraints per dictionary (required fields, value ranges)
 - [ ] Property-based tests with golden messages (round-trip encode/decode)
 - [ ] Replace `src/messages/*` placeholders with generated code
 
 ## 4. Persistence and Replay
 Satisfy resend/replay requirements and recovery after restarts.
-- [ ] Define storage abstraction (trait) for message journaling and indexing
-- [ ] Implement a file-backed append-only log with an index for quick lookup
-- [ ] Persist inbound/outbound messages with sequence numbers and timestamps
+- [x] Define storage abstraction (trait) for message journaling and indexing
+- [x] Implement a file-backed append-only log with an index for quick lookup
+- [x] Persist inbound/outbound messages with sequence numbers and timestamps
 - [ ] Implement ResendRequest/SequenceReset (GapFill and Fill) flows
 - [ ] Recovery on restart (hydrate session state and seq nums)
 - [ ] End-of-day logic (logout/reset policies)
@@ -65,10 +68,11 @@ Separate concerns and prepare for local IPC and remote UDP.
 
 ## 6. Aeron Integration
 Adopt Aeron channels for IPC/UDP and enable distributed deployment.
-- [ ] Evaluate `aeron-rs` vs. FFI binding (licensing, maintenance, performance)
-- [ ] Implement Publication/Subscription mapping to Engine↔Library protocol
-- [ ] Configure channels (ipc vs udp?endpoint=host:port) via `GatewayConfig`
-- [ ] Handle backpressure (offer/poll) and idle strategies
+- [x] Feature-gated FFI scaffolding (`aeron-ffi`) and safe wrapper for Publication/Subscription
+- [x] Storage backend switch: `StorageBackend::Aeron { archive_channel, stream_id }`
+- [x] Initial persistence via Aeron: publish raw FIX bytes on a data stream and seq-index frames on a paired index stream
+- [ ] Replace ad-hoc index polling with Aeron Archive control/replay for precise range playback
+- [ ] Backpressure handling with idle/backoff strategies and metrics on offer/poll
 - [ ] Diagnostic tooling: counters, stream inspection
 
 ## 7. High Availability (Aeron Cluster)
@@ -82,6 +86,7 @@ Adopt Aeron channels for IPC/UDP and enable distributed deployment.
 - [ ] Current-thread runtime option and guidance for latency-sensitive apps
 - [ ] Explicit backpressure APIs and error surfaces for `Session::send`
 - [ ] Typed message APIs using generated codecs; deprecate raw payload paths from hot code
+- [x] Basic typed admin message APIs: `Session::send_admin`, inbound `InboundMessage::admin()`
 - [ ] Rich error types (`thiserror`) and actionable diagnostics
 
 ## 9. Security and TLS
@@ -123,9 +128,9 @@ Adopt Aeron channels for IPC/UDP and enable distributed deployment.
 
 ### Suggested Milestones
 - M1: Session MVP (1,2) + Example initiator/acceptor demo
-- M2: Generated codecs (3) + Typed message send/receive
-- M3: Persistence/replay (4) + Robust resend handling
-- M4: Engine↔Library abstraction (5) + Aeron prototype (6)
+- M2: Generated codecs (3) + Typed message send/receive — initial admin-only support implemented; full dictionary-based codegen pending
+- M3: Persistence/replay (4) + Robust resend handling — file store, storage trait, and early Aeron FFI persistence landed
+- M4: Engine↔Library abstraction (5) + Aeron Archive replay (6) — replace index polling with Archive control API, add backpressure metrics
 - M5: HA with Aeron Cluster (7) + hardening (8–12)
 
 ### Open Questions/Risks
@@ -133,3 +138,6 @@ Adopt Aeron channels for IPC/UDP and enable distributed deployment.
 - FIX version coverage scope (4.2/4.4/FIXT 1.1/5.0SP2)
 - Storage format (custom vs. interoperable) and ops tooling
 - Allocation budgets and zero-copy boundaries across modules
+
+### Plan adjustment (early Aeron support)
+We intentionally pulled forward parts of (6) to unblock realistic persistence: added feature-gated Aeron FFI with pub/sub, and a dual-stream (data/index) approach for basic range replay. Next steps are to migrate to Aeron Archive replay, integrate backpressure/metrics, and keep the file store as the default dev backend.

@@ -1,6 +1,7 @@
 use fixg::{Gateway, GatewayConfig, FixClient, FixClientConfig, FixHandler, Session, InboundMessage};
 use fixg::session::SessionConfig;
 use async_trait::async_trait;
+use fixg::messages::AdminMessage;
 
 struct MyApp;
 
@@ -8,10 +9,16 @@ struct MyApp;
 impl FixHandler for MyApp {
     async fn on_session_active(&mut self, session: &Session) {
         println!("Session is now active! Session ID: {}", session.id());
+        // Send a typed TestRequest
+        let _ = session.send_admin(AdminMessage::TestRequest { id: "PING".to_string() }).await;
     }
 
     async fn on_message(&mut self, _session: &Session, msg: InboundMessage) {
-        println!("Inbound MsgType={} bytes={}", msg.msg_type(), msg.body().len());
+        if let Some(admin) = msg.admin() {
+            println!("Inbound Admin: {:?}", admin);
+        } else {
+            println!("Inbound MsgType={} bytes= {}", msg.msg_type(), msg.body().len());
+        }
     }
 }
 

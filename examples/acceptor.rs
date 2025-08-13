@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     let _ = socket.shutdown().await;
                                                     return;
                                                 }
-                                                FixMsgType::Heartbeat | FixMsgType::Unknown(_) => {}
+                                                FixMsgType::Heartbeat | FixMsgType::Unknown(_) | FixMsgType::ResendRequest | FixMsgType::SequenceReset => {}
                                             }
                                         }
                                         Err(e) => { println!("protocol error: {}", e); return; }

@@ -10,6 +10,8 @@ pub enum FixMsgType {
     Heartbeat,      // 35=0
     TestRequest,    // 35=1
     Logout,         // 35=5
+    ResendRequest,  // 35=2
+    SequenceReset,  // 35=4
     Unknown(String),
 }
 
@@ -47,6 +49,8 @@ fn msg_type_to_str(mt: &FixMsgType) -> &str {
         FixMsgType::Heartbeat => "0",
         FixMsgType::TestRequest => "1",
         FixMsgType::Logout => "5",
+        FixMsgType::ResendRequest => "2",
+        FixMsgType::SequenceReset => "4",
         FixMsgType::Unknown(s) => s.as_str(),
     }
 }
@@ -57,6 +61,8 @@ pub fn msg_type_as_str(mt: &FixMsgType) -> &'static str {
         FixMsgType::Heartbeat => "0",
         FixMsgType::TestRequest => "1",
         FixMsgType::Logout => "5",
+        FixMsgType::ResendRequest => "2",
+        FixMsgType::SequenceReset => "4",
         FixMsgType::Unknown(_) => "?",
     }
 }
@@ -67,6 +73,8 @@ fn parse_msg_type(s: &str) -> FixMsgType {
         "0" => FixMsgType::Heartbeat,
         "1" => FixMsgType::TestRequest,
         "5" => FixMsgType::Logout,
+        "2" => FixMsgType::ResendRequest,
+        "4" => FixMsgType::SequenceReset,
         other => FixMsgType::Unknown(other.to_string()),
     }
 }
@@ -240,5 +248,23 @@ pub fn build_logout(text: Option<&str>, sender_comp_id: &str, target_comp_id: &s
     msg.set_field(49, sender_comp_id);
     msg.set_field(56, target_comp_id);
     if let Some(t) = text { msg.set_field(58, t); }
+    msg
+}
+
+pub fn build_resend_request(begin_seq_no: u32, end_seq_no: u32, sender_comp_id: &str, target_comp_id: &str) -> FixMessage {
+    let mut msg = FixMessage::new(FixMsgType::ResendRequest);
+    msg.set_field(49, sender_comp_id);
+    msg.set_field(56, target_comp_id);
+    msg.set_field(7, begin_seq_no.to_string());
+    msg.set_field(16, end_seq_no.to_string());
+    msg
+}
+
+pub fn build_sequence_reset(new_seq_no: u32, gap_fill: bool, sender_comp_id: &str, target_comp_id: &str) -> FixMessage {
+    let mut msg = FixMessage::new(FixMsgType::SequenceReset);
+    msg.set_field(49, sender_comp_id);
+    msg.set_field(56, target_comp_id);
+    msg.set_field(36, new_seq_no.to_string());
+    if gap_fill { msg.set_field(123, "Y"); }
     msg
 }

@@ -8,6 +8,7 @@ pub struct GatewayConfig {
     pub aeron_channel: String,
     pub bind_address: SocketAddr,
     pub async_runtime: AsyncRuntime,
+    pub storage: StorageBackend,
 }
 
 impl Default for GatewayConfig {
@@ -17,8 +18,15 @@ impl Default for GatewayConfig {
             aeron_channel: "aeron:ipc".to_string(),
             bind_address: "0.0.0.0:4050".parse().unwrap(),
             async_runtime: AsyncRuntime::MultiThread,
+            storage: StorageBackend::File { base_dir: PathBuf::from("data/journal") },
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum StorageBackend {
+    File { base_dir: PathBuf },
+    Aeron { archive_channel: String, stream_id: i32 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
