@@ -17,17 +17,17 @@ Status snapshot (current code):
 
 ## 1. FIX Session Protocol (MVP)
 Implement minimal FIX 4.x session protocol to support logon→heartbeat/test→logout lifecycle.
-- [ ] Parser/encoder for tag-value wire format
-  - [ ] Compute/verify BodyLength (9) and CheckSum (10)
-  - [ ] Handle SOH delimiter, escaping rules, and RawData fields
-  - [ ] Strict header/trailer validation (8/9/35/10)
-- [ ] Session state machine
-  - [ ] Outbound initiator handshake (Logon, Heartbeat, TestRequest, Logout)
-  - [ ] Inbound heartbeat/TestRequest response logic
-  - [ ] Heartbeat interval timers and disconnect timeouts
-  - [ ] Sequence numbers management (per direction)
+- [x] Parser/encoder for tag-value wire format
+  - [x] Compute/verify BodyLength (9) and CheckSum (10)
+  - [x] Handle SOH delimiter (escaping rules and RawData fields: pending)
+  - [x] Strict header/trailer validation (8/9/35/10)
+- [x] Session state machine
+  - [x] Outbound initiator handshake (Logon, Heartbeat, TestRequest, Logout)
+  - [x] Inbound heartbeat/TestRequest response logic
+  - [x] Heartbeat interval timers and disconnect timeouts
+  - [x] Sequence numbers management (per direction) (minimal: outbound increment, inbound tracking)
 - [ ] Minimal persistence of session state (sequence numbers, last logon)
-- [ ] Example: initiator <-> toy acceptor exchange demonstrating logon/heartbeat/logout
+- [x] Example: initiator <-> toy acceptor exchange demonstrating logon/heartbeat/logout
 
 ## 2. Acceptor Mode
 - [ ] Add TCP listener in `Gateway` (bind to `GatewayConfig.bind_address`)

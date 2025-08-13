@@ -5,6 +5,7 @@ pub mod gateway;
 pub mod client;
 pub mod session;
 pub mod messages;
+pub mod protocol;
 
 pub use client::{FixClient, FixHandler, InboundMessage};
 pub use config::{FixClientConfig, GatewayConfig};
