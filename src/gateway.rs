@@ -207,8 +207,16 @@ impl Gateway {
                                                                                                 let begin = msg.fields.get(&7).and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
                                                                                                 let end = msg.fields.get(&16).and_then(|s| s.parse::<u32>().ok()).unwrap_or(in_seq_num);
                                                                                                 if let Ok(chunks) = store.load_outbound_range(&sess_key, begin, end).await {
-                                                                                                    for b in chunks {
-                                                                                                        let _ = write_half.write_all(&b).await;
+                                                                                                    for mut b in chunks {
+                                                                                                        if let Ok(mut m) = protocol::decode(&b) {
+                                                                                                            // Mark as possible duplicate and set OrigSendingTime
+                                                                                                            m.set_field(43, "Y");
+                                                                                                            m.set_field(122, format!("{}", now_millis()));
+                                                                                                            let new_b = protocol::encode(m);
+                                                                                                            let _ = write_half.write_all(&new_b).await;
+                                                                                                        } else {
+                                                                                                            let _ = write_half.write_all(&b).await;
+                                                                                                        }
                                                                                                     }
                                                                                                 }
                                                                                             }

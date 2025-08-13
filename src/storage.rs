@@ -1,9 +1,12 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use tokio::fs::{self, OpenOptions};
-use tokio::io::AsyncWriteExt;
+use std::collections::VecDeque;
+use std::path::{PathBuf};
+use tokio::fs::{self, OpenOptions, File, metadata};
+use tokio::io::{AsyncWriteExt, AsyncSeekExt, AsyncReadExt, BufReader, AsyncBufReadExt};
+use tokio::sync::mpsc;
+use tokio::time::{self, Duration, Instant};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionKey {
@@ -35,6 +38,34 @@ pub struct StoredMessageRecord {
     pub payload_b64: String,
 }
 
+#[derive(Debug, Clone)]
+pub enum DurabilityPolicy {
+    Always,
+    IntervalMs(u64),
+    Disabled,
+}
+
+#[derive(Debug, Clone)]
+pub struct StorageConfig {
+    pub base_dir: PathBuf,
+    pub channel_capacity: usize,
+    pub batch_max: usize,
+    pub flush_interval_ms: u64,
+    pub durability: DurabilityPolicy,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            base_dir: PathBuf::from("data/journal"),
+            channel_capacity: 8192,
+            batch_max: 1024,
+            flush_interval_ms: 50,
+            durability: DurabilityPolicy::IntervalMs(500),
+        }
+    }
+}
+
 #[async_trait]
 pub trait MessageStore: Send + Sync + 'static {
     async fn append(&self, record: StoredMessageRecord) -> std::io::Result<()>;
@@ -44,70 +75,132 @@ pub trait MessageStore: Send + Sync + 'static {
 
 #[derive(Clone)]
 pub struct FileMessageStore {
-    base_dir: PathBuf,
+    tx: mpsc::Sender<StoredMessageRecord>,
+    cfg: StorageConfig,
 }
 
 impl FileMessageStore {
     pub fn new(base_dir: impl Into<PathBuf>) -> Self {
-        Self { base_dir: base_dir.into() }
+        Self::new_with_config(StorageConfig { base_dir: base_dir.into(), ..StorageConfig::default() })
     }
 
-    fn file_path(&self, session: &SessionKey) -> PathBuf {
-        self.base_dir.join(format!("{}.jsonl", session.file_stem()))
+    pub fn new_with_config(cfg: StorageConfig) -> Self {
+        let (tx, mut rx) = mpsc::channel::<StoredMessageRecord>(cfg.channel_capacity);
+        let cfg_clone = cfg.clone();
+        tokio::spawn(async move {
+            let _ = fs::create_dir_all(&cfg_clone.base_dir).await;
+            let mut queue: VecDeque<StoredMessageRecord> = VecDeque::with_capacity(cfg_clone.batch_max);
+            let mut ticker = time::interval(Duration::from_millis(cfg_clone.flush_interval_ms));
+            let mut last_sync: Instant = Instant::now();
+
+            loop {
+                tokio::select! {
+                    maybe = rx.recv() => {
+                        match maybe {
+                            Some(rec) => { queue.push_back(rec); },
+                            None => { flush_batch(&cfg_clone, &mut queue, &mut last_sync).await.ok(); break; }
+                        }
+                        if queue.len() >= cfg_clone.batch_max { let _ = flush_batch(&cfg_clone, &mut queue, &mut last_sync).await; }
+                    }
+                    _ = ticker.tick() => {
+                        if !queue.is_empty() { let _ = flush_batch(&cfg_clone, &mut queue, &mut last_sync).await; }
+                    }
+                }
+            }
+        });
+        Self { tx, cfg }
     }
+}
+
+async fn flush_batch(cfg: &StorageConfig, queue: &mut VecDeque<StoredMessageRecord>, last_sync: &mut Instant) -> std::io::Result<()> {
+    while let Some(rec) = queue.pop_front() {
+        let stem = rec.session.file_stem();
+        let data_path = cfg.base_dir.join(format!("{}.jsonl", stem));
+        let idx_path = cfg.base_dir.join(format!("{}.idx", stem));
+
+        // Compute current offset before writing
+        let offset = match metadata(&data_path).await { Ok(m) => m.len(), Err(_) => 0 };
+
+        let mut f = OpenOptions::new().create(true).append(true).open(&data_path).await?;
+        let line = serde_json::to_string(&rec).unwrap();
+        f.write_all(line.as_bytes()).await?;
+        f.write_all(b"\n").await?;
+
+        if let Direction::Outbound = rec.direction {
+            if let Some(seq) = rec.seq {
+                let mut idx = OpenOptions::new().create(true).append(true).open(&idx_path).await?;
+                let idx_line = format!("{} {}\n", seq, offset);
+                idx.write_all(idx_line.as_bytes()).await?;
+            }
+        }
+
+        match cfg.durability {
+            DurabilityPolicy::Always => { let _ = f.sync_data().await; }
+            DurabilityPolicy::IntervalMs(ms) => {
+                if last_sync.elapsed() >= Duration::from_millis(ms) { let _ = f.sync_data().await; *last_sync = Instant::now(); }
+            }
+            DurabilityPolicy::Disabled => {}
+        }
+    }
+    Ok(())
 }
 
 #[async_trait]
 impl MessageStore for FileMessageStore {
     async fn append(&self, record: StoredMessageRecord) -> std::io::Result<()> {
-        fs::create_dir_all(&self.base_dir).await.ok();
-        let path = self.file_path(&record.session);
-        let mut f = OpenOptions::new().create(true).append(true).open(path).await?;
-        let line = serde_json::to_string(&record).unwrap();
-        f.write_all(line.as_bytes()).await?;
-        f.write_all(b"\n").await?;
-        Ok(())
+        // Backpressure-aware: await if the channel is full
+        self.tx.send(record).await.map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "storage channel closed"))
     }
 
     async fn load_outbound_range(&self, session: &SessionKey, begin_seq: u32, end_seq: u32) -> std::io::Result<Vec<Bytes>> {
-        let path = self.file_path(session);
-        let mut out: Vec<(u32, Bytes)> = Vec::new();
-        let content = match fs::read_to_string(&path).await { Ok(s) => s, Err(e) => {
-            if e.kind() == std::io::ErrorKind::NotFound { return Ok(Vec::new()); }
-            else { return Err(e); }
+        let stem = session.file_stem();
+        let data_path = self.cfg.base_dir.join(format!("{}.jsonl", stem));
+        let idx_path = self.cfg.base_dir.join(format!("{}.idx", stem));
+
+        // Read index and collect offsets
+        let idx_content = match fs::read_to_string(&idx_path).await { Ok(s) => s, Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound { return Ok(Vec::new()); } else { return Err(e); }
         }};
-        for line in content.lines() {
+        let mut offsets: Vec<(u32, u64)> = Vec::new();
+        for line in idx_content.lines() {
+            let mut it = line.split_whitespace();
+            let seq = it.next().and_then(|s| s.parse::<u32>().ok());
+            let off = it.next().and_then(|s| s.parse::<u64>().ok());
+            if let (Some(sq), Some(of)) = (seq, off) {
+                if sq >= begin_seq && sq <= end_seq { offsets.push((sq, of)); }
+            }
+        }
+        offsets.sort_by_key(|(s, _)| *s);
+
+        // Open data file once, then seek to read each record line
+        let mut file = File::open(&data_path).await?;
+        let mut out: Vec<Bytes> = Vec::with_capacity(offsets.len());
+        for (_seq, of) in offsets {
+            file.seek(std::io::SeekFrom::Start(of)).await?;
+            let mut reader = BufReader::new(&mut file);
+            let mut line = String::new();
+            reader.read_line(&mut line).await?;
             if line.trim().is_empty() { continue; }
-            if let Ok(rec) = serde_json::from_str::<StoredMessageRecord>(line) {
-                if rec.direction == Direction::Outbound {
-                    if let Some(seq) = rec.seq {
-                        if seq >= begin_seq && seq <= end_seq {
-                            if let Ok(bytes) = base64::decode(&rec.payload_b64) {
-                                out.push((seq, Bytes::from(bytes)));
-                            }
-                        }
-                    }
+            if let Ok(rec) = serde_json::from_str::<StoredMessageRecord>(&line) {
+                if let Ok(bytes) = base64::decode(&rec.payload_b64) {
+                    out.push(Bytes::from(bytes));
                 }
             }
         }
-        out.sort_by_key(|(s, _)| *s);
-        Ok(out.into_iter().map(|(_, b)| b).collect())
+        Ok(out)
     }
 
     async fn last_outbound_seq(&self, session: &SessionKey) -> std::io::Result<Option<u32>> {
-        let path = self.file_path(session);
-        let content = match fs::read_to_string(&path).await { Ok(s) => s, Err(e) => {
-            if e.kind() == std::io::ErrorKind::NotFound { return Ok(None); }
-            else { return Err(e); }
+        let stem = session.file_stem();
+        let idx_path = self.cfg.base_dir.join(format!("{}.idx", stem));
+        let content = match fs::read_to_string(&idx_path).await { Ok(s) => s, Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound { return Ok(None); } else { return Err(e); }
         }};
-        let mut max_seq: Option<u32> = None;
+        let mut last: Option<u32> = None;
         for line in content.lines() {
-            if let Ok(rec) = serde_json::from_str::<StoredMessageRecord>(line) {
-                if rec.direction == Direction::Outbound {
-                    if let Some(seq) = rec.seq { max_seq = Some(max_seq.map_or(seq, |m| m.max(seq))); }
-                }
-            }
+            let seq = line.split_whitespace().next().and_then(|s| s.parse::<u32>().ok());
+            if let Some(sq) = seq { last = Some(last.map_or(sq, |m| m.max(sq))); }
         }
-        Ok(max_seq)
+        Ok(last)
     }
 }
