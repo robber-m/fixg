@@ -45,7 +45,14 @@ impl FixClient {
     pub async fn initiate(&mut self, cfg: SessionConfig) -> Result<Session> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
-            .send(GatewayClientCommand::InitiateSession { host: cfg.host.clone(), port: cfg.port, respond_to: tx })
+            .send(GatewayClientCommand::InitiateSession {
+                host: cfg.host.clone(),
+                port: cfg.port,
+                sender_comp_id: cfg.sender_comp_id.clone(),
+                target_comp_id: cfg.target_comp_id.clone(),
+                heartbeat_interval_secs: cfg.heartbeat_interval_secs,
+                respond_to: tx,
+            })
             .await
             .map_err(|_| FixgError::ChannelClosed)?;
         let handle: GatewaySessionHandle = rx.await.map_err(|_| FixgError::ChannelClosed)?;

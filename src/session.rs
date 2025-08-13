@@ -35,6 +35,7 @@ pub struct SessionConfig {
     pub port: u16,
     pub sender_comp_id: String,
     pub target_comp_id: String,
+    pub heartbeat_interval_secs: u32,
 }
 
 impl SessionConfig {
@@ -47,6 +48,7 @@ pub struct SessionConfigBuilder {
     port: Option<u16>,
     sender_comp_id: Option<String>,
     target_comp_id: Option<String>,
+    heartbeat_interval_secs: Option<u32>,
 }
 
 impl SessionConfigBuilder {
@@ -54,6 +56,7 @@ impl SessionConfigBuilder {
     pub fn port(mut self, port: u16) -> Self { self.port = Some(port); self }
     pub fn sender_comp_id(mut self, v: impl Into<String>) -> Self { self.sender_comp_id = Some(v.into()); self }
     pub fn target_comp_id(mut self, v: impl Into<String>) -> Self { self.target_comp_id = Some(v.into()); self }
+    pub fn heartbeat_interval_secs(mut self, v: u32) -> Self { self.heartbeat_interval_secs = Some(v); self }
 
     pub fn build(self) -> Result<SessionConfig> {
         Ok(SessionConfig {
@@ -65,6 +68,7 @@ impl SessionConfigBuilder {
             target_comp_id: self
                 .target_comp_id
                 .ok_or_else(|| FixgError::InvalidConfig("target_comp_id missing".into()))?,
+            heartbeat_interval_secs: self.heartbeat_interval_secs.unwrap_or(30),
         })
     }
 }

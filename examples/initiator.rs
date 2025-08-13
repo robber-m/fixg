@@ -11,7 +11,7 @@ impl FixHandler for MyApp {
     }
 
     async fn on_message(&mut self, _session: &Session, msg: InboundMessage) {
-        println!("Received message with type: {}", msg.msg_type());
+        println!("Inbound MsgType={} bytes={}", msg.msg_type(), msg.body().len());
     }
 }
 
@@ -28,6 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .port(9876)
         .sender_comp_id("INITIATOR")
         .target_comp_id("ACCEPTOR")
+        .heartbeat_interval_secs(5)
         .build()?;
 
     let _session = client.initiate(session_config).await?;
