@@ -76,12 +76,47 @@ pub trait MessageStore: Send + Sync + 'static {
     async fn last_outbound_seq(&self, session: &SessionKey) -> std::io::Result<Option<u32>>;
 }
 
+#[cfg(feature = "aeron-ffi")]
+use crate::aeron_ffi::{AeronClient, Publication};
+
+#[cfg(feature = "aeron-ffi")]
+pub struct AeronMessageStore {
+    client: AeronClient,
+    publication: Publication,
+}
+
+#[cfg(feature = "aeron-ffi")]
+impl AeronMessageStore {
+    pub fn new_with_params(channel: &str, stream_id: i32) -> std::io::Result<Self> {
+        let client = AeronClient::connect()?;
+        let publication = Publication::add(&client, channel, stream_id)?;
+        Ok(Self { client, publication })
+    }
+    pub fn new() -> Self { panic!("use new_with_params") }
+}
+
+#[cfg(feature = "aeron-ffi")]
+#[async_trait]
+impl MessageStore for AeronMessageStore {
+    async fn append(&self, record: StoredMessageRecord) -> std::io::Result<()> {
+        // Serialize to wire bytes; in real impl, offer raw FIX bytes not JSON.
+        let bytes = serde_json::to_vec(&record).unwrap();
+        let _ = self.publication.offer(&bytes)?;
+        Ok(())
+    }
+    async fn load_outbound_range(&self, _session: &SessionKey, _begin_seq: u32, _end_seq: u32) -> std::io::Result<Vec<Bytes>> {
+        // TODO: Implement archive replay to a subscription and collect buffers
+        Err(std::io::Error::new(std::io::ErrorKind::Other, "Aeron replay not implemented"))
+    }
+    async fn last_outbound_seq(&self, _session: &SessionKey) -> std::io::Result<Option<u32>> { Ok(None) }
+}
+
 pub fn make_store(backend: &StorageBackend) -> Arc<dyn MessageStore> {
     match backend {
         StorageBackend::File { base_dir } => Arc::new(FileMessageStore::new(base_dir.clone())),
-        StorageBackend::Aeron { archive_channel: _, stream_id: _ } => {
+        StorageBackend::Aeron { archive_channel, stream_id } => {
             #[cfg(feature = "aeron-ffi")] {
-                Arc::new(AeronMessageStore::new())
+                Arc::new(AeronMessageStore::new_with_params(archive_channel, *stream_id).expect("AeronMessageStore init"))
             }
             #[cfg(not(feature = "aeron-ffi"))] {
                 Arc::new(FileMessageStore::new("data/journal"))
@@ -224,25 +259,3 @@ impl MessageStore for FileMessageStore {
 #[cfg(feature = "aeron-ffi")]
 #[link(name = "aeron")]
 extern "C" {}
-
-#[cfg(feature = "aeron-ffi")]
-pub struct AeronMessageStore;
-
-#[cfg(feature = "aeron-ffi")]
-impl AeronMessageStore {
-    pub fn new() -> Self { Self }
-}
-
-#[cfg(feature = "aeron-ffi")]
-#[async_trait]
-impl MessageStore for AeronMessageStore {
-    async fn append(&self, _record: StoredMessageRecord) -> std::io::Result<()> {
-        // TODO: Implement append via Aeron Publication to Archive
-        unimplemented!("Aeron Archive append")
-    }
-    async fn load_outbound_range(&self, _session: &SessionKey, _begin_seq: u32, _end_seq: u32) -> std::io::Result<Vec<Bytes>> {
-        // TODO: Implement Archive replay to buffer extraction
-        unimplemented!("Aeron Archive load range")
-    }
-    async fn last_outbound_seq(&self, _session: &SessionKey) -> std::io::Result<Option<u32>> { Ok(None) }
-}
