@@ -1,0 +1,84 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="fixg"><title>fixg - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../static.files/rustdoc-492a78a4a87dcc01.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="fixg" data-themes="" data-resource-suffix="" data-rustdoc-version="1.82.0 (f6e511eec 2024-10-15)" data-channel="1.82.0" data-search-js="search-a99f1315e7cc5121.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-921df33f47b8780c.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-3b12f09e550e0385.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../fixg/index.html">fixg</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section><ul class="block"><li><a href="#reexports">Re-exports</a></li><li><a href="#modules">Modules</a></li></ul></section></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1>Crate <a class="mod" href="#">fixg</a><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><span class="out-of-band"><a class="src" href="../src/fixg/lib.rs.html#1-12">source</a> · <button id="toggle-all-docs" title="collapse all docs">[<span>&#x2212;</span>]</button></span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="fixg"><a class="doc-anchor" href="#fixg">§</a>fixg</h2>
+<p>A high-performance, async FIX engine and client library in Rust.</p>
+<p>Status: early prototype. Networking, session scaffolding, and an initiator example exist. FIX protocol parsing/validation, logon/heartbeat handling, persistence, Aeron integration, and production-ready features are not yet implemented.</p>
+<h3 id="features-current"><a class="doc-anchor" href="#features-current">§</a>Features (current)</h3>
+<ul>
+<li>Gateway task that manages client registrations and TCP sessions</li>
+<li>Client API to connect to the gateway and initiate a TCP session to a host:port</li>
+<li>Simple event callbacks: <code>on_session_active</code>, <code>on_message</code>, <code>on_disconnect</code></li>
+<li>Send and receive raw payloads via <code>bytes::Bytes</code></li>
+</ul>
+<h3 id="not-yet-implemented"><a class="doc-anchor" href="#not-yet-implemented">§</a>Not yet implemented</h3>
+<ul>
+<li>FIX message parsing/validation and session protocol (Logon/Heartbeat/SeqNums)</li>
+<li>Persistence/replay, Aeron IPC/UDP, HA/cluster</li>
+<li>Acceptor mode, authentication hooks</li>
+<li>Code generation for FIX codecs</li>
+</ul>
+<h3 id="quickstart"><a class="doc-anchor" href="#quickstart">§</a>Quickstart</h3>
+<p>Requires latest stable Rust.</p>
+<ul>
+<li>Build and run the initiator example:</li>
+</ul>
+<div class="example-wrap"><pre class="language-bash"><code>cargo run --example initiator
+</code></pre></div>
+<ul>
+<li>Minimal program using the library API:</li>
+</ul>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>fixg::{Gateway, GatewayConfig, FixClient, FixClientConfig, FixHandler, Session, InboundMessage};
+<span class="kw">use </span>fixg::session::SessionConfig;
+<span class="kw">use </span>async_trait::async_trait;
+
+<span class="kw">struct </span>MyApp;
+
+<span class="attr">#[async_trait]
+</span><span class="kw">impl </span>FixHandler <span class="kw">for </span>MyApp {
+    <span class="kw">async fn </span>on_session_active(<span class="kw-2">&amp;mut </span><span class="self">self</span>, session: <span class="kw-2">&amp;</span>Session) {
+        <span class="macro">println!</span>(<span class="string">"Session is now active! Session ID: {}"</span>, session.id());
+    }
+
+    <span class="kw">async fn </span>on_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, _session: <span class="kw-2">&amp;</span>Session, msg: InboundMessage) {
+        <span class="macro">println!</span>(<span class="string">"Received message with type: {}"</span>, msg.msg_type());
+    }
+}
+
+<span class="attr">#[tokio::main]
+</span><span class="kw">async fn </span>main() -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
+    <span class="kw">let </span>gateway_handle = Gateway::spawn(GatewayConfig::default()).<span class="kw">await</span><span class="question-mark">?</span>;
+
+    <span class="kw">let </span><span class="kw-2">mut </span>client = FixClient::connect(FixClientConfig::new(<span class="number">1</span>), gateway_handle).<span class="kw">await</span><span class="question-mark">?</span>;
+
+    <span class="kw">let </span>session_config = SessionConfig::builder()
+        .host(<span class="string">"127.0.0.1"</span>)
+        .port(<span class="number">9876</span>)
+        .sender_comp_id(<span class="string">"INITIATOR"</span>)
+        .target_comp_id(<span class="string">"ACCEPTOR"</span>)
+        .build()<span class="question-mark">?</span>;
+
+    <span class="kw">let </span>_session = client.initiate(session_config).<span class="kw">await</span><span class="question-mark">?</span>;
+
+    <span class="macro">println!</span>(<span class="string">"Client running, waiting for events..."</span>);
+    client.run(<span class="kw-2">&amp;mut </span>MyApp).<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="prelude-val">Ok</span>(())
+}</code></pre></div>
+<h3 id="api-docs-rustdoc"><a class="doc-anchor" href="#api-docs-rustdoc">§</a>API docs (Rustdoc)</h3>
+<ul>
+<li>Generate and open local docs:</li>
+</ul>
+<div class="example-wrap"><pre class="language-bash"><code>cargo doc --no-deps --open
+</code></pre></div>
+<p>The crate’s docs include this README at the crate root.</p>
+<h3 id="project-layout"><a class="doc-anchor" href="#project-layout">§</a>Project layout</h3>
+<ul>
+<li><code>src/gateway.rs</code>: Gateway task and handle</li>
+<li><code>src/client.rs</code>: Client API and event loop</li>
+<li><code>src/session.rs</code>: Session type and configuration builder</li>
+<li><code>src/config.rs</code>: Config types</li>
+<li><code>src/messages/</code>: Placeholder for generated and hand-written message types</li>
+<li><code>examples/initiator.rs</code>: Minimal initiator wiring</li>
+<li><code>DESIGN.md</code>: Architectural notes and roadmap</li>
+</ul>
+<h3 id="license"><a class="doc-anchor" href="#license">§</a>License</h3>
+<p>Apache-2.0 OR MIT</p>
+</div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name" id="reexport.FixClient"><code>pub use client::<a class="struct" href="client/struct.FixClient.html" title="struct fixg::client::FixClient">FixClient</a>;</code></div></li><li><div class="item-name" id="reexport.FixHandler"><code>pub use client::<a class="trait" href="client/trait.FixHandler.html" title="trait fixg::client::FixHandler">FixHandler</a>;</code></div></li><li><div class="item-name" id="reexport.InboundMessage"><code>pub use client::<a class="struct" href="client/struct.InboundMessage.html" title="struct fixg::client::InboundMessage">InboundMessage</a>;</code></div></li><li><div class="item-name" id="reexport.FixClientConfig"><code>pub use config::<a class="struct" href="config/struct.FixClientConfig.html" title="struct fixg::config::FixClientConfig">FixClientConfig</a>;</code></div></li><li><div class="item-name" id="reexport.GatewayConfig"><code>pub use config::<a class="struct" href="config/struct.GatewayConfig.html" title="struct fixg::config::GatewayConfig">GatewayConfig</a>;</code></div></li><li><div class="item-name" id="reexport.Gateway"><code>pub use gateway::<a class="struct" href="gateway/struct.Gateway.html" title="struct fixg::gateway::Gateway">Gateway</a>;</code></div></li><li><div class="item-name" id="reexport.GatewayHandle"><code>pub use gateway::<a class="struct" href="gateway/struct.GatewayHandle.html" title="struct fixg::gateway::GatewayHandle">GatewayHandle</a>;</code></div></li><li><div class="item-name" id="reexport.DisconnectReason"><code>pub use session::<a class="enum" href="session/enum.DisconnectReason.html" title="enum fixg::session::DisconnectReason">DisconnectReason</a>;</code></div></li><li><div class="item-name" id="reexport.Session"><code>pub use session::<a class="struct" href="session/struct.Session.html" title="struct fixg::session::Session">Session</a>;</code></div></li><li><div class="item-name" id="reexport.SessionConfig"><code>pub use session::<a class="struct" href="session/struct.SessionConfig.html" title="struct fixg::session::SessionConfig">SessionConfig</a>;</code></div></li></ul><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><ul class="item-table"><li><div class="item-name"><a class="mod" href="client/index.html" title="mod fixg::client">client</a></div></li><li><div class="item-name"><a class="mod" href="config/index.html" title="mod fixg::config">config</a></div></li><li><div class="item-name"><a class="mod" href="error/index.html" title="mod fixg::error">error</a></div></li><li><div class="item-name"><a class="mod" href="gateway/index.html" title="mod fixg::gateway">gateway</a></div></li><li><div class="item-name"><a class="mod" href="messages/index.html" title="mod fixg::messages">messages</a></div></li><li><div class="item-name"><a class="mod" href="session/index.html" title="mod fixg::session">session</a></div></li></ul></section></div></main></body></html>
