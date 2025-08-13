@@ -47,7 +47,7 @@ impl TryFrom<&FixMessage> for AdminMessage {
                 let text = msg.fields.get(&58).cloned();
                 Ok(AdminMessage::Logout { text })
             }
-            FixMsgType::Unknown(_) => Err(()),
+            FixMsgType::ResendRequest | FixMsgType::SequenceReset | FixMsgType::Unknown(_) => Err(()),
         }
     }
 }

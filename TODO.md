@@ -136,3 +136,58 @@ Adopt Aeron channels for IPC/UDP and enable distributed deployment.
 - FIX version coverage scope (4.2/4.4/FIXT 1.1/5.0SP2)
 - Storage format (custom vs. interoperable) and ops tooling
 - Allocation budgets and zero-copy boundaries across modules
+
+## M2→M3 Hardening Plan (appended)
+
+To evolve from the initial typed admin messages and minimal journaling/resend into the robust architecture in `DESIGN.md`, target the following increments:
+
+- Storage robustness
+  - Define a pluggable `MessageStore` trait with backpressure-aware write path and batching.
+  - Provide fsync and durability policies (always, interval, disabled) with metrics.
+  - Introduce per-session rotating segments with index files for O(log n) lookups; memory-map indexes.
+  - Add corruption detection and recovery tooling (checksum, verifier CLI, truncate/repair on startup).
+  - Support compaction and archival; document retention policies and disk quotas.
+
+- Sequence numbers and recovery
+  - Persist last known seq numbers and last logon state; reload on restart.
+  - Implement full resend semantics including handling 16=0 (infinite) and chunked replays.
+  - Implement SequenceReset GapFill and Fill flows with correct range accounting and idempotency.
+  - Detect and suppress duplicates during replay using journal index.
+
+- Protocol correctness
+  - Enforce sending times (52) and OrigSendingTime (122) on resends; validate PossDupFlag (43) and PossResend (97).
+  - Validate required headers per dictionary; configurable BeginString and ApplVerID where applicable.
+  - Clock skew handling and optional time-source abstraction.
+
+- Typed codecs (beyond admin)
+  - Introduce `fixg-codegen` crate: parse FIX XML, generate fields, components, messages.
+  - Zero-copy decoding over `&[u8]` using field views; avoid allocations in hot path.
+  - Outbound builders produce `Bytes` directly with pre-sized buffers and tag order policy.
+  - Validation constraints from dictionary (Reqd, Enums, min/max) with helpful errors.
+  - Property-based testing with golden fixtures; fuzz decoding.
+
+- Engine↔Library contract
+  - Formalize internal wire protocol for events/commands; version it and add feature-gated transports.
+  - Specify backpressure semantics; introduce bounded queues and observable drops.
+  - Add idle strategies and cooperative scheduling guidance.
+
+- Observability
+  - Add `tracing` spans for I/O, parsing, session transitions, storage ops; include seq nums and session keys.
+  - Export Prometheus metrics: queue depths, resend counts, duplicates suppressed, write latencies, fsync behavior.
+  - Structured logs with message IDs and correlation to journal offsets.
+
+- Testing matrix
+  - Unit tests: parser, encoding, state machine, storage index.
+  - Integration tests: initiator/acceptor with fixture dictionaries; restart/recovery scenarios.
+  - Soak and fault-injection: network partitions, delayed packets, disk full, corruption.
+  - Conformance tests against public FIX endpoints or a harness.
+
+- Performance
+  - Benchmarks for encode/decode, session loop, journaling (batched writes vs fsync), resend throughput.
+  - Lock-free or minimal-lock designs; tune channel sizes and OS buffers.
+  - Allocation tracking and zero-allocation goals on the hot path.
+
+- API ergonomics
+  - Typed application messages; deprecate raw payloads in hot code paths.
+  - Clear error types (`thiserror`), backpressure-aware send API, and current-thread runtime option.
+  - Document best practices for latency-sensitive apps.
