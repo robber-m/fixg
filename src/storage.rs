@@ -82,36 +82,68 @@ use crate::aeron_ffi::{AeronClient, Publication, Subscription};
 #[cfg(feature = "aeron-ffi")]
 pub struct AeronMessageStore {
     client: AeronClient,
-    publication: Publication,
-    subscription: Subscription,
+    data_pub: Publication,
+    index_pub: Publication,
+    index_sub: Subscription,
     channel: String,
-    stream_id: i32,
+    data_stream_id: i32,
+    index_stream_id: i32,
 }
 
 #[cfg(feature = "aeron-ffi")]
 impl AeronMessageStore {
     pub fn new_with_params(channel: &str, stream_id: i32) -> std::io::Result<Self> {
         let client = AeronClient::connect()?;
-        let publication = Publication::add(&client, channel, stream_id)?;
-        let subscription = Subscription::add(&client, channel, stream_id)?;
-        Ok(Self { client, publication, subscription, channel: channel.to_string(), stream_id })
+        let data_pub = Publication::add(&client, channel, stream_id)?;
+        let index_stream_id = stream_id + 1;
+        let index_pub = Publication::add(&client, channel, index_stream_id)?;
+        let index_sub = Subscription::add(&client, channel, index_stream_id)?;
+        Ok(Self { client, data_pub, index_pub, index_sub, channel: channel.to_string(), data_stream_id: stream_id, index_stream_id })
     }
     pub fn new() -> Self { panic!("use new_with_params") }
+
+    fn encode_index_frame(seq: u32, payload: &[u8]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(4 + payload.len());
+        v.extend_from_slice(&seq.to_be_bytes());
+        v.extend_from_slice(payload);
+        v
+    }
 }
 
 #[cfg(feature = "aeron-ffi")]
 #[async_trait]
 impl MessageStore for AeronMessageStore {
     async fn append(&self, record: StoredMessageRecord) -> std::io::Result<()> {
-        let bytes = serde_json::to_vec(&record).unwrap();
-        let _ = self.publication.offer(&bytes)?;
+        // Only persist outbound messages with seq numbers for replay
+        if record.direction == Direction::Outbound {
+            if let Some(seq) = record.seq {
+                if let Ok(bytes) = base64::decode(&record.payload_b64) {
+                    // Publish raw FIX bytes on data stream
+                    let _ = self.data_pub.offer(&bytes)?;
+                    // Publish index frame on index stream
+                    let idx = Self::encode_index_frame(seq, &bytes);
+                    let _ = self.index_pub.offer(&idx)?;
+                }
+            }
+        }
         Ok(())
     }
-    async fn load_outbound_range(&self, _session: &SessionKey, _begin_seq: u32, _end_seq: u32) -> std::io::Result<Vec<Bytes>> {
-        // For now, just poll subscription for a small window and return whatever we see.
-        let frags = self.subscription.poll_collect(50, 10);
-        Ok(frags.into_iter().map(|v| Bytes::from(v)).collect())
+
+    async fn load_outbound_range(&self, _session: &SessionKey, begin_seq: u32, end_seq: u32) -> std::io::Result<Vec<Bytes>> {
+        // Poll index stream briefly and filter by seq range
+        let frags = self.index_sub.poll_collect(100, 25);
+        let mut out: Vec<(u32, Bytes)> = Vec::new();
+        for f in frags.into_iter() {
+            if f.len() < 4 { continue; }
+            let seq = u32::from_be_bytes([f[0], f[1], f[2], f[3]]);
+            if seq >= begin_seq && seq <= end_seq {
+                out.push((seq, Bytes::from(f[4..].to_vec())));
+            }
+        }
+        out.sort_by_key(|(s, _)| *s);
+        Ok(out.into_iter().map(|(_, b)| b).collect())
     }
+
     async fn last_outbound_seq(&self, _session: &SessionKey) -> std::io::Result<Option<u32>> { Ok(None) }
 }
 
