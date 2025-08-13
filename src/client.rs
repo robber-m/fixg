@@ -28,44 +28,41 @@ pub struct FixClient {
     library_id: i32,
     events_rx: mpsc::Receiver<GatewayToClientEvent>,
     cmd_tx: mpsc::Sender<GatewayClientCommand>,
-    outbound_tx: mpsc::Sender<Bytes>,
     current_session: Option<Session>,
 }
 
 impl FixClient {
     pub async fn connect(config: FixClientConfig, handle: GatewayHandle) -> Result<Self> {
         let conn = handle.register_client(config.library_id).await?;
-        // Create a per-session outbound channel that would be wired to gateway send path.
-        let (outbound_tx, mut outbound_rx) = mpsc::channel::<Bytes>(1024);
-        let cmd_tx = conn.cmd_tx.clone();
-
-        // Wire outbound sends to gateway client command channel (no-op for now)
-        tokio::spawn(async move {
-            while let Some(payload) = outbound_rx.recv().await {
-                // In a full implementation we would include session id and route to network.
-                let _ = cmd_tx.send(GatewayClientCommand::Send { _session_id: 0, _payload: payload }).await;
-            }
-        });
-
         Ok(Self {
             library_id: config.library_id,
             events_rx: conn.events_rx,
             cmd_tx: conn.cmd_tx,
-            outbound_tx,
             current_session: None,
         })
     }
 
-    pub async fn initiate(&mut self, _cfg: SessionConfig) -> Result<Session> {
-        // Ask gateway to create a session, then produce a Session handle and send SessionActive event.
+    pub async fn initiate(&mut self, cfg: SessionConfig) -> Result<Session> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
-            .send(GatewayClientCommand::InitiateSession { respond_to: tx })
+            .send(GatewayClientCommand::InitiateSession { host: cfg.host.clone(), port: cfg.port, respond_to: tx })
             .await
             .map_err(|_| FixgError::ChannelClosed)?;
         let handle: GatewaySessionHandle = rx.await.map_err(|_| FixgError::ChannelClosed)?;
 
-        let (session, _out_rx) = new_session(handle.session_id);
+        let session_id = handle.session_id;
+        let cmd_tx = self.cmd_tx.clone();
+        let (session, mut out_rx) = new_session(session_id);
+
+        // Route outbound payloads to gateway with session id
+        tokio::spawn(async move {
+            while let Some(payload) = out_rx.recv().await {
+                let _ = cmd_tx
+                    .send(GatewayClientCommand::Send { session_id, payload })
+                    .await;
+            }
+        });
+
         self.current_session = Some(session.clone());
         Ok(session)
     }
@@ -74,7 +71,6 @@ impl FixClient {
         while let Some(event) = self.events_rx.recv().await {
             match event {
                 GatewayToClientEvent::SessionActive { session_id } => {
-                    // Ensure we have a session handle; if not, create one
                     if self.current_session.is_none() {
                         let (session, _out_rx) = new_session(session_id);
                         self.current_session = Some(session);

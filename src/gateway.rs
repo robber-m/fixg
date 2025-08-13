@@ -2,6 +2,10 @@ use crate::config::GatewayConfig;
 use crate::error::{FixgError, Result};
 use crate::session::DisconnectReason;
 use bytes::Bytes;
+use std::collections::HashMap;
+use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug, Clone)]
@@ -25,48 +29,97 @@ pub struct Gateway;
 impl Gateway {
     pub async fn spawn(_config: GatewayConfig) -> Result<GatewayHandle> {
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<GatewayCommand>(1024);
+        let next_session_id = Arc::new(AtomicU64::new(0));
 
-        tokio::spawn(async move {
-            // Minimal gateway loop: manages client registrations and routes simple messages.
-            let mut next_session_id: u64 = 1;
-            let mut clients: Vec<ClientConnectionInternal> = Vec::new();
+        tokio::spawn({
+            let next_session_id = Arc::clone(&next_session_id);
+            async move {
+                let mut _clients: Vec<ClientConnectionInternal> = Vec::new();
 
-            while let Some(cmd) = cmd_rx.recv().await {
-                match cmd {
-                    GatewayCommand::RegisterClient { library_id, respond_to } => {
-                        let (to_client_tx, to_client_rx) = mpsc::channel::<GatewayEvent>(1024);
-                        let (from_client_tx, mut from_client_rx) = mpsc::channel::<ClientCommand>(1024);
+                while let Some(cmd) = cmd_rx.recv().await {
+                    match cmd {
+                        GatewayCommand::RegisterClient { library_id, respond_to } => {
+                            let (to_client_tx, to_client_rx) = mpsc::channel::<GatewayEvent>(1024);
+                            let (from_client_tx, mut from_client_rx) = mpsc::channel::<ClientCommand>(1024);
 
-                        // Spawn a lightweight task to handle client-originated commands (e.g., initiate session)
-                        let to_client_tx_clone = to_client_tx.clone();
-                        tokio::spawn(async move {
-                            while let Some(cc) = from_client_rx.recv().await {
-                                match cc {
-                                    ClientCommand::InitiateSession { respond_to } => {
-                                        let session_id = next_session_id;
-                                        // Send SessionActive event
-                                        let _ = to_client_tx_clone
-                                            .send(GatewayEvent::SessionActive { session_id })
-                                            .await;
-                                        let _ = respond_to.send(SessionHandle { session_id });
-                                    }
-                                    ClientCommand::Send { _session_id, _payload } => {
-                                        // In a real gateway, this would write to the network.
+                            // Per-client task managing sessions and I/O
+                            let to_client_tx_clone = to_client_tx.clone();
+                            let next_id = Arc::clone(&next_session_id);
+                            tokio::spawn(async move {
+                                let mut session_writers: HashMap<u64, tokio::net::tcp::OwnedWriteHalf> = HashMap::new();
+
+                                while let Some(cc) = from_client_rx.recv().await {
+                                    match cc {
+                                        ClientCommand::InitiateSession { host, port, respond_to } => {
+                                            let addr = format!("{}:{}", host, port);
+                                            match TcpStream::connect(addr).await {
+                                                Ok(stream) => {
+                                                    let session_id = next_id.fetch_add(1, Ordering::Relaxed) + 1;
+                                                    let (mut read_half, write_half) = stream.into_split();
+                                                    session_writers.insert(session_id, write_half);
+
+                                                    // Reader task: forward inbound bytes to client
+                                                    let to_client_tx_reader = to_client_tx_clone.clone();
+                                                    tokio::spawn(async move {
+                                                        let mut buf = vec![0u8; 16 * 1024];
+                                                        loop {
+                                                            match read_half.read(&mut buf).await {
+                                                                Ok(0) => {
+                                                                    let _ = to_client_tx_reader
+                                                                        .send(GatewayEvent::Disconnected { session_id, reason: DisconnectReason::PeerClosed })
+                                                                        .await;
+                                                                    break;
+                                                                }
+                                                                Ok(n) => {
+                                                                    let payload = Bytes::copy_from_slice(&buf[..n]);
+                                                                    let _ = to_client_tx_reader
+                                                                        .send(GatewayEvent::InboundMessage { session_id, msg_type: "raw".to_string(), payload })
+                                                                        .await;
+                                                                }
+                                                                Err(_) => {
+                                                                    let _ = to_client_tx_reader
+                                                                        .send(GatewayEvent::Disconnected { session_id, reason: DisconnectReason::Unknown })
+                                                                        .await;
+                                                                    break;
+                                                                }
+                                                            }
+                                                        }
+                                                    });
+
+                                                    let _ = to_client_tx_clone
+                                                        .send(GatewayEvent::SessionActive { session_id })
+                                                        .await;
+                                                    let _ = respond_to.send(SessionHandle { session_id });
+                                                }
+                                                Err(e) => {
+                                                    let _ = respond_to.send(SessionHandle { session_id: 0 });
+                                                    let _ = to_client_tx_clone
+                                                        .send(GatewayEvent::Disconnected { session_id: 0, reason: DisconnectReason::Unknown })
+                                                        .await;
+                                                    tracing::error!(error = %e, "Failed to connect session");
+                                                }
+                                            }
+                                        }
+                                        ClientCommand::Send { session_id, payload } => {
+                                            if let Some(writer) = session_writers.get_mut(&session_id) {
+                                                let _ = writer.write_all(&payload).await;
+                                            }
+                                        }
                                     }
                                 }
-                            }
-                        });
+                            });
 
-                        let _ = respond_to.send(ClientConnection {
-                            events_rx: to_client_rx,
-                            cmd_tx: from_client_tx,
-                            _library_id: library_id,
-                        });
+                            let _ = respond_to.send(ClientConnection {
+                                events_rx: to_client_rx,
+                                cmd_tx: from_client_tx,
+                                _library_id: library_id,
+                            });
 
-                        clients.push(ClientConnectionInternal { _library_id: library_id, to_client_tx });
-                    }
-                    GatewayCommand::Shutdown => {
-                        break;
+                            _clients.push(ClientConnectionInternal { _library_id: library_id, to_client_tx });
+                        }
+                        GatewayCommand::Shutdown => {
+                            break;
+                        }
                     }
                 }
             }
@@ -103,8 +156,8 @@ pub enum GatewayCommand {
 
 #[derive(Debug)]
 pub enum ClientCommand {
-    InitiateSession { respond_to: oneshot::Sender<SessionHandle> },
-    Send { _session_id: u64, _payload: Bytes },
+    InitiateSession { host: String, port: u16, respond_to: oneshot::Sender<SessionHandle> },
+    Send { session_id: u64, payload: Bytes },
 }
 
 #[derive(Debug, Clone, Copy)]
