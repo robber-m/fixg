@@ -84,6 +84,7 @@ dependencies = [
  "base64",
  "bytes",
  "futures",
+ "libc",
  "memchr",
  "serde",
  "serde_json",

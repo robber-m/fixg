@@ -80,10 +80,10 @@ pub fn make_store(backend: &StorageBackend) -> Arc<dyn MessageStore> {
     match backend {
         StorageBackend::File { base_dir } => Arc::new(FileMessageStore::new(base_dir.clone())),
         StorageBackend::Aeron { archive_channel: _, stream_id: _ } => {
-            #[cfg(feature = "aeron")] {
+            #[cfg(feature = "aeron-ffi")] {
                 Arc::new(AeronMessageStore::new())
             }
-            #[cfg(not(feature = "aeron"))] {
+            #[cfg(not(feature = "aeron-ffi"))] {
                 Arc::new(FileMessageStore::new("data/journal"))
             }
         }
@@ -221,18 +221,28 @@ impl MessageStore for FileMessageStore {
     }
 }
 
-#[cfg(feature = "aeron")]
+#[cfg(feature = "aeron-ffi")]
+#[link(name = "aeron")]
+extern "C" {}
+
+#[cfg(feature = "aeron-ffi")]
 pub struct AeronMessageStore;
 
-#[cfg(feature = "aeron")]
+#[cfg(feature = "aeron-ffi")]
 impl AeronMessageStore {
     pub fn new() -> Self { Self }
 }
 
-#[cfg(feature = "aeron")]
+#[cfg(feature = "aeron-ffi")]
 #[async_trait]
 impl MessageStore for AeronMessageStore {
-    async fn append(&self, _record: StoredMessageRecord) -> std::io::Result<()> { unimplemented!("Aeron Archive append") }
-    async fn load_outbound_range(&self, _session: &SessionKey, _begin_seq: u32, _end_seq: u32) -> std::io::Result<Vec<Bytes>> { unimplemented!("Aeron Archive load range") }
+    async fn append(&self, _record: StoredMessageRecord) -> std::io::Result<()> {
+        // TODO: Implement append via Aeron Publication to Archive
+        unimplemented!("Aeron Archive append")
+    }
+    async fn load_outbound_range(&self, _session: &SessionKey, _begin_seq: u32, _end_seq: u32) -> std::io::Result<Vec<Bytes>> {
+        // TODO: Implement Archive replay to buffer extraction
+        unimplemented!("Aeron Archive load range")
+    }
     async fn last_outbound_seq(&self, _session: &SessionKey) -> std::io::Result<Option<u32>> { Ok(None) }
 }
