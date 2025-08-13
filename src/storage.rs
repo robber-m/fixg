@@ -3,10 +3,13 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{PathBuf};
+use std::sync::Arc;
 use tokio::fs::{self, OpenOptions, File, metadata};
 use tokio::io::{AsyncWriteExt, AsyncSeekExt, AsyncReadExt, BufReader, AsyncBufReadExt};
 use tokio::sync::mpsc;
 use tokio::time::{self, Duration, Instant};
+
+use crate::config::StorageBackend;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionKey {
@@ -71,6 +74,20 @@ pub trait MessageStore: Send + Sync + 'static {
     async fn append(&self, record: StoredMessageRecord) -> std::io::Result<()>;
     async fn load_outbound_range(&self, session: &SessionKey, begin_seq: u32, end_seq: u32) -> std::io::Result<Vec<Bytes>>;
     async fn last_outbound_seq(&self, session: &SessionKey) -> std::io::Result<Option<u32>>;
+}
+
+pub fn make_store(backend: &StorageBackend) -> Arc<dyn MessageStore> {
+    match backend {
+        StorageBackend::File { base_dir } => Arc::new(FileMessageStore::new(base_dir.clone())),
+        StorageBackend::Aeron { archive_channel: _, stream_id: _ } => {
+            #[cfg(feature = "aeron")] {
+                Arc::new(AeronMessageStore::new())
+            }
+            #[cfg(not(feature = "aeron"))] {
+                Arc::new(FileMessageStore::new("data/journal"))
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -148,7 +165,6 @@ async fn flush_batch(cfg: &StorageConfig, queue: &mut VecDeque<StoredMessageReco
 #[async_trait]
 impl MessageStore for FileMessageStore {
     async fn append(&self, record: StoredMessageRecord) -> std::io::Result<()> {
-        // Backpressure-aware: await if the channel is full
         self.tx.send(record).await.map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "storage channel closed"))
     }
 
@@ -203,4 +219,20 @@ impl MessageStore for FileMessageStore {
         }
         Ok(last)
     }
+}
+
+#[cfg(feature = "aeron")]
+pub struct AeronMessageStore;
+
+#[cfg(feature = "aeron")]
+impl AeronMessageStore {
+    pub fn new() -> Self { Self }
+}
+
+#[cfg(feature = "aeron")]
+#[async_trait]
+impl MessageStore for AeronMessageStore {
+    async fn append(&self, _record: StoredMessageRecord) -> std::io::Result<()> { unimplemented!("Aeron Archive append") }
+    async fn load_outbound_range(&self, _session: &SessionKey, _begin_seq: u32, _end_seq: u32) -> std::io::Result<Vec<Bytes>> { unimplemented!("Aeron Archive load range") }
+    async fn last_outbound_seq(&self, _session: &SessionKey) -> std::io::Result<Option<u32>> { Ok(None) }
 }

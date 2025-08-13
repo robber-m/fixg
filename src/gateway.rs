@@ -12,7 +12,7 @@ use tokio::time::{self, Duration, Instant};
 use crate::protocol::{self, FixMsgType};
 use crate::messages::AdminMessage;
 use crate::session::OutboundPayload;
-use crate::storage::{FileMessageStore, MessageStore, StoredMessageRecord, Direction, SessionKey};
+use crate::storage::{make_store, MessageStore, StoredMessageRecord, Direction, SessionKey};
 
 fn now_millis() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -38,10 +38,10 @@ impl GatewayHandle {
 pub struct Gateway;
 
 impl Gateway {
-    pub async fn spawn(_config: GatewayConfig) -> Result<GatewayHandle> {
+    pub async fn spawn(config: GatewayConfig) -> Result<GatewayHandle> {
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<GatewayCommand>(1024);
         let next_session_id = Arc::new(AtomicU64::new(0));
-        let store = FileMessageStore::new("data/journal");
+        let store = make_store(&config.storage);
 
         tokio::spawn({
             let next_session_id = Arc::clone(&next_session_id);
@@ -207,7 +207,7 @@ impl Gateway {
                                                                                                 let begin = msg.fields.get(&7).and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
                                                                                                 let end = msg.fields.get(&16).and_then(|s| s.parse::<u32>().ok()).unwrap_or(in_seq_num);
                                                                                                 if let Ok(chunks) = store.load_outbound_range(&sess_key, begin, end).await {
-                                                                                                    for mut b in chunks {
+                                                                                                    for b in chunks {
                                                                                                         if let Ok(mut m) = protocol::decode(&b) {
                                                                                                             // Mark as possible duplicate and set OrigSendingTime
                                                                                                             m.set_field(43, "Y");
