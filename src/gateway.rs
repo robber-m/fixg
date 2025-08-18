@@ -12,7 +12,7 @@ use tokio::time::{self, Duration, Instant};
 use crate::protocol::{self, FixMsgType};
 use crate::messages::AdminMessage;
 use crate::session::OutboundPayload;
-use crate::storage::{make_store, MessageStore, StoredMessageRecord, Direction, SessionKey};
+use crate::storage::{make_store, Direction, SessionKey};
 
 fn now_millis() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -84,9 +84,9 @@ impl Gateway {
                             match listener.accept().await {
                                 Ok((stream, _addr)) => {
                                     let session_id = next_id.fetch_add(1, Ordering::Relaxed) + 1;
-                                    let (mut read_half, write_half) = stream.into_split();
+                                    let (read_half, write_half) = stream.into_split();
 
-                                    let (app_out_tx, mut app_out_rx) = mpsc::channel::<Bytes>(1024);
+                                    let (app_out_tx, app_out_rx) = mpsc::channel::<OutboundPayload>(1024);
                                     {
                                         let mut map = global_session_senders.write().await;
                                         map.insert(session_id, app_out_tx.clone());
@@ -97,8 +97,10 @@ impl Gateway {
                                         let auth = Arc::clone(&auth);
                                         async move {
                                             let mut write_half = write_half;
+                                            let mut read_half = read_half;
+                                            let mut app_out_rx = app_out_rx;
                                             let mut out_seq_num: u32 = 1;
-                                            let mut in_seq_num: u32 = 0;
+                                            let mut _in_seq_num: u32 = 0;
                                             let mut last_rx: Instant = Instant::now();
                                             let mut test_req_outstanding: Option<String> = None;
                                             let mut hb_interval = Duration::from_secs(30);
@@ -114,7 +116,18 @@ impl Gateway {
                                                     biased;
                                                     maybe_out = app_out_rx.recv() => {
                                                         if let Some(payload) = maybe_out {
-                                                            let _ = write_half.write_all(&payload).await;
+                                                            match payload {
+                                                                OutboundPayload::Raw(bytes) => {
+                                                                    let _ = write_half.write_all(&bytes).await;
+                                                                }
+                                                                OutboundPayload::Admin(msg) => {
+                                                                    let mut fix = msg.into_fix(&target_comp, &sender_comp);
+                                                                    fix.set_field(34, out_seq_num.to_string());
+                                                                    out_seq_num += 1;
+                                                                    let bytes = protocol::encode(fix);
+                                                                    let _ = write_half.write_all(&bytes).await;
+                                                                }
+                                                            }
                                                         } else { break; }
                                                     }
                                                     res = read_half.read_buf(&mut read_buf) => {
@@ -130,9 +143,9 @@ impl Gateway {
                                                                 while let Some(msg_bytes) = protocol::try_extract_one(&mut read_buf) {
                                                                     last_rx = Instant::now();
                                                                     match protocol::decode(&msg_bytes) {
-                                                                        Ok(mut msg) => {
+                                                                        Ok(msg) => {
                                                                             if let Some(seq) = msg.fields.get(&34) {
-                                                                                if let Ok(seq_val) = seq.parse::<u32>() { in_seq_num = seq_val; }
+                                                                                if let Ok(seq_val) = seq.parse::<u32>() { _in_seq_num = seq_val; }
                                                                             }
                                                                             match msg.msg_type {
                                                                                 FixMsgType::Logon => {
@@ -185,6 +198,7 @@ impl Gateway {
                                                                                     break;
                                                                                 }
                                                                                 FixMsgType::Heartbeat | FixMsgType::Unknown(_) => {}
+                                                                                FixMsgType::ResendRequest | FixMsgType::SequenceReset => {}
                                                                             }
                                                                             let msg_type = match msg.msg_type { FixMsgType::Unknown(_) => "?".to_string(), _ => protocol::msg_type_as_str(&msg.msg_type).to_string() };
                                                                             let senders = clients.read().await;
@@ -262,6 +276,7 @@ impl Gateway {
                                 let mut v = clients.write().await;
                                 v.push(to_client_tx.clone());
                             }
+                            let global_session_senders = Arc::clone(&global_session_senders);
                             tokio::spawn(async move {
                                 let mut session_senders: HashMap<u64, mpsc::Sender<OutboundPayload>> = HashMap::new();
 
@@ -348,7 +363,7 @@ impl Gateway {
                                                                             while let Some(msg_bytes) = protocol::try_extract_one(&mut read_buf) {
                                                                                 last_rx = Instant::now();
                                                                                 match protocol::decode(&msg_bytes) {
-                                                                                    Ok(mut msg) => {
+                                                                                    Ok(msg) => {
                                                                                         // Check seqnum if present
                                                                                         if let Some(seq) = msg.fields.get(&34) {
                                                                                             if let Ok(seq_val) = seq.parse::<u32>() { in_seq_num = seq_val; }
@@ -504,7 +519,7 @@ impl Gateway {
                                 _library_id: library_id,
                             });
 
-                            _clients.push(ClientConnectionInternal { _library_id: library_id, to_client_tx });
+                            _clients.push(ClientConnectionInternal { _library_id: library_id, _to_client_tx: to_client_tx });
                         }
                         GatewayCommand::Shutdown => {
                             break;
@@ -527,7 +542,7 @@ pub struct ClientConnection {
 
 struct ClientConnectionInternal {
     _library_id: i32,
-    to_client_tx: mpsc::Sender<GatewayEvent>,
+    _to_client_tx: mpsc::Sender<GatewayEvent>,
 }
 
 #[derive(Debug)]

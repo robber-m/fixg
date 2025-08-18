@@ -7,7 +7,7 @@ use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot};
 use crate::messages::AdminMessage;
 use crate::protocol;
-use std::collections::HashMap; // Assuming HashMap is used based on the changes
+// Removed unused import
 
 /// Represents an inbound FIX message received from a counterparty.
 /// 
@@ -41,7 +41,7 @@ pub trait FixHandler: Send {
 /// send messages, and handle incoming events from the gateway.
 pub struct FixClient {
     /// Unique identifier for this client instance
-    library_id: i32, // Changed from client_id to library_id as per original code
+    _library_id: i32,
     /// Channel for receiving events from the gateway
     events_rx: mpsc::Receiver<GatewayToClientEvent>, // Changed from event_rx to events_rx as per original code
     /// Channel for sending commands to the gateway
@@ -54,7 +54,7 @@ impl FixClient {
     pub async fn connect(config: FixClientConfig, handle: GatewayHandle) -> Result<Self> {
         let conn = handle.register_client(config.library_id).await?;
         Ok(Self {
-            library_id: config.library_id,
+            _library_id: config.library_id,
             events_rx: conn.events_rx,
             cmd_tx: conn.cmd_tx,
             current_session: None,

@@ -2,36 +2,16 @@
 use crate::protocol::{FixMessage, FixMsgType};
 use std::convert::TryFrom;
 
-/// Administrative FIX messages used for session management.
-/// 
-/// These messages handle the establishment, maintenance, and termination
-/// of FIX sessions between counterparties.
 #[derive(Debug, Clone)]
 pub enum AdminMessage {
-    /// Logon message to initiate a FIX session
     Logon {
-        /// Heartbeat interval in seconds
         heart_bt_int_secs: Option<u32>,
-        /// Sender's company ID
         sender_comp_id: Option<String>,
-        /// Target company ID
         target_comp_id: Option<String>,
     },
-    /// Heartbeat message to maintain session connectivity
-    Heartbeat { 
-        /// Test request ID if this heartbeat is in response to a test request
-        test_req_id: Option<String> 
-    },
-    /// Test request message to verify session connectivity
-    TestRequest { 
-        /// Unique identifier for this test request
-        id: String 
-    },
-    /// Logout message to terminate a FIX session
-    Logout { 
-        /// Optional reason for logout
-        text: Option<String> 
-    },
+    Heartbeat { test_req_id: Option<String> },
+    TestRequest { id: String },
+    Logout { text: Option<String> },
 }
 
 impl TryFrom<&FixMessage> for AdminMessage {

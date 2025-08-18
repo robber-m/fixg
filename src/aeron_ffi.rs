@@ -37,6 +37,7 @@ extern "C" {
         reserved_value_supplier: *const c_void,
         reserved_value_supplier_clientd: *mut c_void,
     ) -> c_longlong;
+    #[allow(unused)]
     fn aeron_publication_is_closed(publication: *mut aeron_publication_t) -> c_int;
     fn aeron_publication_close(publication: *mut aeron_publication_t) -> c_int;
 
@@ -128,7 +129,7 @@ impl Publication {
         }
     }
 
-    pub fn offer_retry(&self, data: &[u8], max_retries: usize, backoff_ms: u64, fragment_limit: i32) -> std::io::Result<i64> {
+    pub fn offer_retry(&self, data: &[u8], max_retries: usize, backoff_ms: u64, _fragment_limit: i32) -> std::io::Result<i64> {
         let mut tries = 0;
         loop {
             match self.offer(data) {

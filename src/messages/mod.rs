@@ -40,9 +40,9 @@ pub struct ExecutionReport {
     /// Exchange-assigned order identifier
     order_id: String,
     /// Type of execution that occurred
-    exec_type: ExecType,
+    _exec_type: ExecType,
     /// Current status of the order
-    ord_status: OrdStatus,
+    _ord_status: OrdStatus,
     /// Price of the last fill
     last_px: f64,
     /// Quantity of the last fill
@@ -85,8 +85,8 @@ impl ExecutionReportBuilder {
         ExecutionReport {
             cl_ord_id: self.cl_ord_id.unwrap_or_default(),
             order_id: self.order_id.unwrap_or_default(),
-            exec_type: self.exec_type.unwrap_or(ExecType::Fill),
-            ord_status: self.ord_status.unwrap_or(OrdStatus::Filled),
+            _exec_type: self.exec_type.unwrap_or(ExecType::Fill),
+            _ord_status: self.ord_status.unwrap_or(OrdStatus::Filled),
             last_px: self.last_px.unwrap_or_default(),
             last_qty: self.last_qty.unwrap_or_default(),
         }
