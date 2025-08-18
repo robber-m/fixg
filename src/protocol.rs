@@ -127,27 +127,35 @@ pub fn encode_to_writer<W: Write>(msg: &FixMessage, writer: &mut W) -> Result<()
         .map(|(tag, value)| tag.to_string().len() + 1 + value.len() + 1) // tag=value\x01
         .sum();
 
-    // Write BeginString
-    write!(writer, "8=FIX.4.4{}", SOH as char).map_err(|e| e.to_string())?;
+    // Initialize checksum calculation
+    let mut checksum = 0u8;
 
-    // Write BodyLength
-    write!(writer, "9={}{}", body_length, SOH as char).map_err(|e| e.to_string())?;
+    // Write BeginString and update checksum
+    let begin_string = format!("8=FIX.4.4{}", SOH as char);
+    writer.write_all(begin_string.as_bytes()).map_err(|e| e.to_string())?;
+    for &b in begin_string.as_bytes() {
+        checksum = checksum.wrapping_add(b);
+    }
 
-    // Write body fields
+    // Write BodyLength and update checksum
+    let body_length_str = format!("9={}{}", body_length, SOH as char);
+    writer.write_all(body_length_str.as_bytes()).map_err(|e| e.to_string())?;
+    for &b in body_length_str.as_bytes() {
+        checksum = checksum.wrapping_add(b);
+    }
+
+    // Write body fields and update checksum
     for (tag, value) in body_fields {
-        write!(writer, "{}={}{}", tag, value, SOH as char).map_err(|e| e.to_string())?;
+        let field_str = format!("{}={}{}", tag, value, SOH as char);
+        writer.write_all(field_str.as_bytes()).map_err(|e| e.to_string())?;
+        for &b in field_str.as_bytes() {
+            checksum = checksum.wrapping_add(b);
+        }
     }
 
-    // Calculate checksum by re-creating the message up to this point
-    let mut temp_buffer = Vec::new();
-    write!(temp_buffer, "8=FIX.4.4{}", SOH as char).unwrap();
-    write!(temp_buffer, "9={}{}", body_length, SOH as char).unwrap();
-    for (tag, value) in &body_fields {
-        write!(temp_buffer, "{}={}{}", tag, value, SOH as char).unwrap();
-    }
-
-    let checksum = temp_buffer.iter().fold(0u8, |acc, &b| acc.wrapping_add(b)) % 256;
-    write!(writer, "10={:03}{}", checksum, SOH as char).map_err(|e| e.to_string())?;
+    // Calculate final checksum
+    let final_checksum = checksum % 256;
+    write!(writer, "10={:03}{}", final_checksum, SOH as char).map_err(|e| e.to_string())?;
 
     Ok(())
 }
