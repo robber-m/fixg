@@ -41,9 +41,9 @@ impl Gateway {
     pub async fn spawn(config: GatewayConfig) -> Result<GatewayHandle> {
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<GatewayCommand>(1024);
         let next_session_id = Arc::new(AtomicU64::new(0));
-<<<<<<< HEAD
-        let global_session_senders: Arc<RwLock<HashMap<u64, mpsc::Sender<Bytes>>>> = Arc::new(RwLock::new(HashMap::new()));
+        let global_session_senders: Arc<RwLock<HashMap<u64, mpsc::Sender<OutboundPayload>>>> = Arc::new(RwLock::new(HashMap::new()));
         let clients: Arc<RwLock<Vec<mpsc::Sender<GatewayEvent>>>> = Arc::new(RwLock::new(Vec::new()));
+        let store = make_store(&config.storage);
 
         tokio::spawn({
             let next_session_id = Arc::clone(&next_session_id);
@@ -51,13 +51,7 @@ impl Gateway {
             let clients = Arc::clone(&clients);
             let bind_addr = config.bind_address;
             let auth = Arc::clone(&config.auth_strategy);
-=======
-        let store = make_store(&config.storage);
-
-        tokio::spawn({
-            let next_session_id = Arc::clone(&next_session_id);
             let store = store.clone();
->>>>>>> origin/main
             async move {
                 let mut _clients: Vec<ClientConnectionInternal> = Vec::new();
 
@@ -254,14 +248,11 @@ impl Gateway {
                             // Per-client task managing sessions and I/O
                             let to_client_tx_clone = to_client_tx.clone();
                             let next_id = Arc::clone(&next_session_id);
-<<<<<<< HEAD
+                            let store = store.clone();
                             {
                                 let mut v = clients.write().await;
                                 v.push(to_client_tx.clone());
                             }
-=======
-                            let store = store.clone();
->>>>>>> origin/main
                             tokio::spawn(async move {
                                 let mut session_senders: HashMap<u64, mpsc::Sender<OutboundPayload>> = HashMap::new();
 
@@ -486,23 +477,12 @@ impl Gateway {
                                         }
                                         ClientCommand::Send { session_id, payload } => {
                                             if let Some(tx) = session_senders.get_mut(&session_id) {
-<<<<<<< HEAD
-                                                let _ = tx.send(payload).await;
-                                            } else {
-                                                if let Some(tx) = {
-                                                    let map = global_session_senders.read().await;
-                                                    map.get(&session_id).cloned()
-                                                } {
-                                                    let _ = tx.send(payload).await;
-                                                }
-=======
                                                 let _ = tx.send(OutboundPayload::Raw(payload)).await;
                                             }
                                         }
                                         ClientCommand::SendAdmin { session_id, msg, .. } => {
                                             if let Some(tx) = session_senders.get_mut(&session_id) {
                                                 let _ = tx.send(OutboundPayload::Admin(msg)).await;
->>>>>>> origin/main
                                             }
                                         }
                                     }
