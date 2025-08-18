@@ -20,7 +20,7 @@ pub struct GatewayConfig {
     /// Storage backend configuration for message persistence
     pub storage: StorageBackend,
     /// Authentication strategy for validating incoming connections
-    #[serde(skip)]
+    #[serde(skip, default = "default_auth_strategy")]
     pub auth_strategy: Arc<dyn AuthStrategy>,
 }
 
@@ -87,7 +87,7 @@ pub enum AsyncRuntime {
 }
 
 /// Strategy interface for authenticating inbound Logon messages in acceptor mode.
-pub trait AuthStrategy: Send + Sync {
+pub trait AuthStrategy: Send + Sync + std::fmt::Debug {
     fn validate_logon(&self, sender_comp_id: &str, target_comp_id: &str) -> bool;
 }
 
@@ -102,3 +102,5 @@ pub struct AcceptAllAuth;
 impl AuthStrategy for AcceptAllAuth {
     fn validate_logon(&self, _sender_comp_id: &str, _target_comp_id: &str) -> bool { true }
 }
+
+fn default_auth_strategy() -> Arc<dyn AuthStrategy> { Arc::new(AcceptAllAuth) }

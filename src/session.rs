@@ -1,6 +1,6 @@
 use crate::error::{FixgError, Result};
 use bytes::Bytes;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use crate::messages::AdminMessage;
 
 /// Reasons why a FIX session might be disconnected.

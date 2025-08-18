@@ -98,7 +98,7 @@ fn parse_msg_type(s: &str) -> FixMsgType {
     }
 }
 
-pub fn encode(mut msg: FixMessage) -> Bytes {
+pub fn encode(msg: FixMessage) -> Bytes {
     // Build header and body first without checksum to compute 9 and 10
     let mut body = BytesMut::with_capacity(256);
 

@@ -5,7 +5,8 @@ use std::collections::VecDeque;
 use std::path::{PathBuf};
 use std::sync::Arc;
 use tokio::fs::{self, OpenOptions, File, metadata};
-use tokio::io::{AsyncWriteExt, AsyncSeekExt, AsyncReadExt, BufReader, AsyncBufReadExt};
+use tokio::io::{AsyncWriteExt, AsyncSeekExt, BufReader, AsyncBufReadExt};
+use base64::{engine::general_purpose, Engine as _};
 use tokio::sync::mpsc;
 use tokio::time::{self, Duration, Instant};
 
@@ -121,13 +122,13 @@ use crate::aeron_ffi::{AeronClient, Publication, Subscription};
 
 #[cfg(feature = "aeron-ffi")]
 pub struct AeronMessageStore {
-    client: AeronClient,
+    _client: AeronClient,
     data_pub: Publication,
     index_pub: Publication,
     index_sub: Subscription,
-    channel: String,
-    data_stream_id: i32,
-    index_stream_id: i32,
+    _channel: String,
+    _data_stream_id: i32,
+    _index_stream_id: i32,
 }
 
 #[cfg(feature = "aeron-ffi")]
@@ -138,7 +139,7 @@ impl AeronMessageStore {
         let index_stream_id = stream_id + 1;
         let index_pub = Publication::add(&client, channel, index_stream_id)?;
         let index_sub = Subscription::add(&client, channel, index_stream_id)?;
-        Ok(Self { client, data_pub, index_pub, index_sub, channel: channel.to_string(), data_stream_id: stream_id, index_stream_id })
+        Ok(Self { _client: client, data_pub, index_pub, index_sub, _channel: channel.to_string(), _data_stream_id: stream_id, _index_stream_id: index_stream_id })
     }
     pub fn new() -> Self { panic!("use new_with_params") }
 
@@ -155,7 +156,7 @@ impl AeronMessageStore {
 impl MessageStore for AeronMessageStore {
     async fn append(&self, record: StoredMessageRecord) -> std::io::Result<()> {
         // Fallback to bytes path if possible
-        if let Ok(bytes) = base64::decode(&record.payload_b64) {
+        if let Ok(bytes) = general_purpose::STANDARD.decode(&record.payload_b64) {
             self.append_bytes(&record.session, record.direction, record.seq, record.ts_millis, &bytes).await
         } else {
             Ok(())
@@ -193,7 +194,7 @@ impl MessageStore for AeronMessageStore {
 pub fn make_store(backend: &StorageBackend) -> Arc<dyn MessageStore> {
     match backend {
         StorageBackend::File { base_dir } => Arc::new(FileMessageStore::new(base_dir.clone())),
-        StorageBackend::Aeron { archive_channel, stream_id } => {
+        StorageBackend::Aeron { archive_channel: _, stream_id: _ } => {
             #[cfg(feature = "aeron-ffi")] {
                 Arc::new(AeronMessageStore::new_with_params(archive_channel, *stream_id).expect("AeronMessageStore init"))
             }
@@ -294,7 +295,7 @@ impl MessageStore for FileMessageStore {
             direction,
             seq,
             ts_millis,
-            payload_b64: base64::encode(payload),
+            payload_b64: general_purpose::STANDARD.encode(payload),
         };
         self.append(rec).await
     }
@@ -329,7 +330,7 @@ impl MessageStore for FileMessageStore {
             reader.read_line(&mut line).await?;
             if line.trim().is_empty() { continue; }
             if let Ok(rec) = serde_json::from_str::<StoredMessageRecord>(&line) {
-                if let Ok(bytes) = base64::decode(&rec.payload_b64) {
+                if let Ok(bytes) = general_purpose::STANDARD.decode(&rec.payload_b64) {
                     out.push(Bytes::from(bytes));
                 }
             }
