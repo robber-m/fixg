@@ -6,6 +6,7 @@ description = "fixg: A high-performance, async FIX engine and client library in 
 license = "Apache-2.0 OR MIT"
 repository = "https://example.com/fixg"
 build = "build.rs"
+rust-version = "1.75"
 
 [features]
 default = []

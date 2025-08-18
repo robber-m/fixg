@@ -5,8 +5,8 @@ use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio::sync::{mpsc, oneshot};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::time::{self, Duration, Instant};
 
 use crate::protocol::{self, FixMsgType};
@@ -41,13 +41,203 @@ impl Gateway {
     pub async fn spawn(config: GatewayConfig) -> Result<GatewayHandle> {
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<GatewayCommand>(1024);
         let next_session_id = Arc::new(AtomicU64::new(0));
+        let global_session_senders: Arc<RwLock<HashMap<u64, mpsc::Sender<OutboundPayload>>>> = Arc::new(RwLock::new(HashMap::new()));
+        let clients: Arc<RwLock<Vec<mpsc::Sender<GatewayEvent>>>> = Arc::new(RwLock::new(Vec::new()));
         let store = make_store(&config.storage);
 
         tokio::spawn({
             let next_session_id = Arc::clone(&next_session_id);
+            let global_session_senders = Arc::clone(&global_session_senders);
+            let clients = Arc::clone(&clients);
+            let bind_addr = config.bind_address;
+            let auth = Arc::clone(&config.auth_strategy);
             let store = store.clone();
             async move {
                 let mut _clients: Vec<ClientConnectionInternal> = Vec::new();
+
+                // Start TCP listener for acceptor mode
+                let listener = match TcpListener::bind(bind_addr).await {
+                    Ok(l) => l,
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to bind listener");
+                        return;
+                    }
+                };
+
+                // Accept loop in background
+                tokio::spawn({
+                    let next_id = Arc::clone(&next_session_id);
+                    let clients = Arc::clone(&clients);
+                    let global_session_senders = Arc::clone(&global_session_senders);
+                    let auth = Arc::clone(&auth);
+                    async move {
+                        loop {
+                            match listener.accept().await {
+                                Ok((stream, _addr)) => {
+                                    let session_id = next_id.fetch_add(1, Ordering::Relaxed) + 1;
+                                    let (mut read_half, write_half) = stream.into_split();
+
+                                    let (app_out_tx, mut app_out_rx) = mpsc::channel::<Bytes>(1024);
+                                    {
+                                        let mut map = global_session_senders.write().await;
+                                        map.insert(session_id, app_out_tx.clone());
+                                    }
+
+                                    tokio::spawn({
+                                        let clients = Arc::clone(&clients);
+                                        let auth = Arc::clone(&auth);
+                                        async move {
+                                            let mut write_half = write_half;
+                                            let mut out_seq_num: u32 = 1;
+                                            let mut in_seq_num: u32 = 0;
+                                            let mut last_rx: Instant = Instant::now();
+                                            let mut test_req_outstanding: Option<String> = None;
+                                            let mut hb_interval = Duration::from_secs(30);
+                                            let mut sender_comp = String::new();
+                                            let mut target_comp = String::new();
+                                            let mut read_buf = BytesMut::with_capacity(16 * 1024);
+
+                                            let mut tick = time::interval(Duration::from_secs(1));
+                                            tick.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
+
+                                            loop {
+                                                tokio::select! {
+                                                    biased;
+                                                    maybe_out = app_out_rx.recv() => {
+                                                        if let Some(payload) = maybe_out {
+                                                            let _ = write_half.write_all(&payload).await;
+                                                        } else { break; }
+                                                    }
+                                                    res = read_half.read_buf(&mut read_buf) => {
+                                                        match res {
+                                                            Ok(0) => {
+                                                                let senders = clients.read().await;
+                                                                for tx in senders.iter() {
+                                                                    let _ = tx.send(GatewayEvent::Disconnected { session_id, reason: DisconnectReason::PeerClosed }).await;
+                                                                }
+                                                                break;
+                                                            }
+                                                            Ok(_) => {
+                                                                while let Some(msg_bytes) = protocol::try_extract_one(&mut read_buf) {
+                                                                    last_rx = Instant::now();
+                                                                    match protocol::decode(&msg_bytes) {
+                                                                        Ok(mut msg) => {
+                                                                            if let Some(seq) = msg.fields.get(&34) {
+                                                                                if let Ok(seq_val) = seq.parse::<u32>() { in_seq_num = seq_val; }
+                                                                            }
+                                                                            match msg.msg_type {
+                                                                                FixMsgType::Logon => {
+                                                                                    if let Some(hb) = msg.fields.get(&108) {
+                                                                                        if let Ok(secs) = hb.parse::<u64>() { hb_interval = Duration::from_secs(secs); }
+                                                                                    }
+                                                                                    if let Some(s) = msg.fields.get(&49) { sender_comp = s.clone(); }
+                                                                                    if let Some(t) = msg.fields.get(&56) { target_comp = t.clone(); }
+
+                                                                                    // Validate using pluggable auth
+                                                                                    if !auth.validate_logon(&sender_comp, &target_comp) {
+                                                                                        let mut lo = protocol::build_logout(Some("Logon rejected"), &target_comp, &sender_comp);
+                                                                                        lo.set_field(34, out_seq_num.to_string()); out_seq_num += 1;
+                                                                                        let lo_bytes = protocol::encode(lo);
+                                                                                        let _ = write_half.write_all(&lo_bytes).await;
+                                                                                        let senders = clients.read().await;
+                                                                                        for tx in senders.iter() {
+                                                                                            let _ = tx.send(GatewayEvent::Disconnected { session_id, reason: DisconnectReason::ApplicationRequested }).await;
+                                                                                        }
+                                                                                        break;
+                                                                                    }
+
+                                                                                    // Echo logon
+                                                                                    let mut logon = protocol::build_logon(hb_interval.as_secs() as u32, &target_comp, &sender_comp);
+                                                                                    logon.set_field(34, out_seq_num.to_string()); out_seq_num += 1;
+                                                                                    let bytes = protocol::encode(logon);
+                                                                                    let _ = write_half.write_all(&bytes).await;
+
+                                                                                    let senders = clients.read().await;
+                                                                                    for tx in senders.iter() {
+                                                                                        let _ = tx.send(GatewayEvent::SessionActive { session_id }).await;
+                                                                                    }
+                                                                                }
+                                                                                FixMsgType::TestRequest => {
+                                                                                    let id = msg.fields.get(&112).cloned();
+                                                                                    let mut hb = protocol::build_heartbeat(id.as_deref(), &target_comp, &sender_comp);
+                                                                                    hb.set_field(34, out_seq_num.to_string()); out_seq_num += 1;
+                                                                                    let hb_bytes = protocol::encode(hb);
+                                                                                    let _ = write_half.write_all(&hb_bytes).await;
+                                                                                }
+                                                                                FixMsgType::Logout => {
+                                                                                    let mut lo = protocol::build_logout(None, &target_comp, &sender_comp);
+                                                                                    lo.set_field(34, out_seq_num.to_string()); out_seq_num += 1;
+                                                                                    let lo_bytes = protocol::encode(lo);
+                                                                                    let _ = write_half.write_all(&lo_bytes).await;
+                                                                                    let senders = clients.read().await;
+                                                                                    for tx in senders.iter() {
+                                                                                        let _ = tx.send(GatewayEvent::Disconnected { session_id, reason: DisconnectReason::ApplicationRequested }).await;
+                                                                                    }
+                                                                                    break;
+                                                                                }
+                                                                                FixMsgType::Heartbeat | FixMsgType::Unknown(_) => {}
+                                                                            }
+                                                                            let msg_type = match msg.msg_type { FixMsgType::Unknown(_) => "?".to_string(), _ => protocol::msg_type_as_str(&msg.msg_type).to_string() };
+                                                                            let senders = clients.read().await;
+                                                                            for tx in senders.iter() {
+                                                                                let _ = tx.send(GatewayEvent::InboundMessage { session_id, msg_type: msg_type.clone(), payload: msg_bytes.clone() }).await;
+                                                                            }
+                                                                        }
+                                                                        Err(_) => {
+                                                                            let senders = clients.read().await;
+                                                                            for tx in senders.iter() {
+                                                                                let _ = tx.send(GatewayEvent::Disconnected { session_id, reason: DisconnectReason::ProtocolError }).await;
+                                                                            }
+                                                                            break;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(_) => {
+                                                                let senders = clients.read().await;
+                                                                for tx in senders.iter() {
+                                                                    let _ = tx.send(GatewayEvent::Disconnected { session_id, reason: DisconnectReason::Unknown }).await;
+                                                                }
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    _ = tick.tick() => {
+                                                        let idle = last_rx.elapsed();
+                                                        if idle >= hb_interval * 3 {
+                                                            let senders = clients.read().await;
+                                                            for tx in senders.iter() {
+                                                                let _ = tx.send(GatewayEvent::Disconnected { session_id, reason: DisconnectReason::Timeout }).await;
+                                                            }
+                                                            break;
+                                                        } else if idle >= hb_interval * 2 {
+                                                            if test_req_outstanding.is_none() {
+                                                                let tr_id = format!("TR-{}", out_seq_num);
+                                                                let mut tr = protocol::build_test_request(&tr_id, &target_comp, &sender_comp);
+                                                                tr.set_field(34, out_seq_num.to_string()); out_seq_num += 1;
+                                                                let tr_bytes = protocol::encode(tr);
+                                                                let _ = write_half.write_all(&tr_bytes).await;
+                                                                test_req_outstanding = Some(tr_id);
+                                                            }
+                                                        } else if idle >= hb_interval {
+                                                            let mut hb = protocol::build_heartbeat(None, &target_comp, &sender_comp);
+                                                            hb.set_field(34, out_seq_num.to_string()); out_seq_num += 1;
+                                                            let hb_bytes = protocol::encode(hb);
+                                                            let _ = write_half.write_all(&hb_bytes).await;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    });
+                                }
+                                Err(e) => {
+                                    tracing::error!(error = %e, "Accept failed");
+                                }
+                            }
+                        }
+                    }
+                });
 
                 while let Some(cmd) = cmd_rx.recv().await {
                     match cmd {
@@ -59,6 +249,10 @@ impl Gateway {
                             let to_client_tx_clone = to_client_tx.clone();
                             let next_id = Arc::clone(&next_session_id);
                             let store = store.clone();
+                            {
+                                let mut v = clients.write().await;
+                                v.push(to_client_tx.clone());
+                            }
                             tokio::spawn(async move {
                                 let mut session_senders: HashMap<u64, mpsc::Sender<OutboundPayload>> = HashMap::new();
 
@@ -74,6 +268,10 @@ impl Gateway {
                                                     // Create channel for application-driven outbound payloads to this session task
                                                     let (app_out_tx, mut app_out_rx) = mpsc::channel::<OutboundPayload>(1024);
                                                     session_senders.insert(session_id, app_out_tx.clone());
+                                                    {
+                                                        let mut map = global_session_senders.write().await;
+                                                        map.insert(session_id, app_out_tx.clone());
+                                                    }
 
                                                     // Spawn session task owning write half, performing handshake, timers, and parsing
                                                     let to_client_tx_reader = to_client_tx_clone.clone();

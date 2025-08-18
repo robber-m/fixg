@@ -12,10 +12,10 @@ Status snapshot (current code):
 - Persistence: file-backed JSONL journal with index; pluggable storage backend and early Aeron FFI support behind `aeron-ffi` feature (data/index streams)
 
 ## 0. Foundations and hygiene
-- [ ] Establish MSRV and enable CI (fmt, clippy, tests, docs build)
-- [ ] Add `cargo deny` and `RUSTFLAGS`/`rustdoc` lint gates (deny warnings)
-- [ ] Define coding & API conventions (naming, error handling, docs expectations)
-- [ ] Add crate-level docs per module and examples coverage
+- [x] Establish MSRV and enable CI (fmt, clippy, tests, docs build)
+- [x] Add `cargo deny` and `RUSTFLAGS`/`rustdoc` lint gates (deny warnings)
+- [x] Define coding & API conventions (naming, error handling, docs expectations)
+- [x] Add crate-level docs per module and examples coverage
 
 ## 1. FIX Session Protocol (MVP)
 Implement minimal FIX 4.x session protocol to support logon→heartbeat/test→logout lifecycle.
@@ -32,9 +32,9 @@ Implement minimal FIX 4.x session protocol to support logon→heartbeat/test→l
 - [x] Example: initiator <-> toy acceptor exchange demonstrating logon/heartbeat/logout
 
 ## 2. Acceptor Mode
-- [ ] Add TCP listener in `Gateway` (bind to `GatewayConfig.bind_address`)
-- [ ] Accept inbound connections and create `Session`s
-- [ ] Implement logon negotiation and rejection paths (CompIDs, heartbeat interval, reset)
+- [x] Add TCP listener in `Gateway` (bind to `GatewayConfig.bind_address`)
+- [x] Accept inbound connections and create `Session`s
+- [x] Implement logon negotiation and rejection paths (CompIDs, heartbeat interval, reset)
 - [ ] Pluggable authentication hook on logon (strategy in `GatewayConfig`)
 
 ## 3. Message Codec Generation
