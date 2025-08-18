@@ -4,33 +4,33 @@ pub mod generated;
 pub use generated::AdminMessage;
 
 /// FIX Logon message structure.
-/// 
+///
 /// Represents a FIX Logon message used to initiate a session.
 /// Currently a placeholder structure for future expansion.
 #[derive(Debug, Clone)]
 pub struct Logon;
 
 /// Execution report type indicating how an order was processed.
-/// 
+///
 /// Defines the different ways an order can be executed or processed
 /// in the trading system.
 #[derive(Debug, Clone)]
-pub enum ExecType { 
+pub enum ExecType {
     /// Order was completely filled
-    Fill 
+    Fill,
 }
 
 /// Current status of an order in the trading system.
-/// 
+///
 /// Indicates the current state of an order from submission to completion.
 #[derive(Debug, Clone)]
-pub enum OrdStatus { 
+pub enum OrdStatus {
     /// Order has been completely filled
-    Filled 
+    Filled,
 }
 
 /// FIX Execution Report message containing order execution details.
-/// 
+///
 /// Reports the status and execution details of an order, including
 /// pricing, quantity, and execution type information.
 #[derive(Debug, Clone)]
@@ -50,11 +50,13 @@ pub struct ExecutionReport {
 }
 
 impl ExecutionReport {
-    pub fn builder() -> ExecutionReportBuilder { ExecutionReportBuilder::default() }
+    pub fn builder() -> ExecutionReportBuilder {
+        ExecutionReportBuilder::default()
+    }
 }
 
 /// Builder pattern implementation for constructing ExecutionReport instances.
-/// 
+///
 /// Provides a fluent interface for setting execution report fields
 /// with optional validation and default values.
 #[derive(Debug, Default)]
@@ -74,12 +76,30 @@ pub struct ExecutionReportBuilder {
 }
 
 impl ExecutionReportBuilder {
-    pub fn cl_ord_id(mut self, v: impl Into<String>) -> Self { self.cl_ord_id = Some(v.into()); self }
-    pub fn order_id(mut self, v: impl Into<String>) -> Self { self.order_id = Some(v.into()); self }
-    pub fn exec_type(mut self, v: ExecType) -> Self { self.exec_type = Some(v); self }
-    pub fn ord_status(mut self, v: OrdStatus) -> Self { self.ord_status = Some(v); self }
-    pub fn last_px(mut self, v: f64) -> Self { self.last_px = Some(v); self }
-    pub fn last_qty(mut self, v: i64) -> Self { self.last_qty = Some(v); self }
+    pub fn cl_ord_id(mut self, v: impl Into<String>) -> Self {
+        self.cl_ord_id = Some(v.into());
+        self
+    }
+    pub fn order_id(mut self, v: impl Into<String>) -> Self {
+        self.order_id = Some(v.into());
+        self
+    }
+    pub fn exec_type(mut self, v: ExecType) -> Self {
+        self.exec_type = Some(v);
+        self
+    }
+    pub fn ord_status(mut self, v: OrdStatus) -> Self {
+        self.ord_status = Some(v);
+        self
+    }
+    pub fn last_px(mut self, v: f64) -> Self {
+        self.last_px = Some(v);
+        self
+    }
+    pub fn last_qty(mut self, v: i64) -> Self {
+        self.last_qty = Some(v);
+        self
+    }
 
     pub fn build(self) -> ExecutionReport {
         ExecutionReport {

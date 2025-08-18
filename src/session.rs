@@ -1,10 +1,10 @@
 use crate::error::{FixgError, Result};
+use crate::messages::AdminMessage;
 use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot};
-use crate::messages::AdminMessage;
 
 /// Reasons why a FIX session might be disconnected.
-/// 
+///
 /// This enum categorizes the different conditions that can lead
 /// to a session termination for proper error handling and logging.
 #[derive(Debug, Clone, Copy)]
@@ -22,7 +22,7 @@ pub enum DisconnectReason {
 }
 
 /// Types of outbound messages that can be sent through a FIX session.
-/// 
+///
 /// This enum distinguishes between raw byte payloads and structured
 /// administrative messages for proper handling and routing.
 #[derive(Debug, Clone)]
@@ -34,7 +34,7 @@ pub enum OutboundPayload {
 }
 
 /// Represents an active FIX session.
-/// 
+///
 /// A session provides the interface for sending messages and managing
 /// the connection state between two FIX endpoints. Each session has a
 /// unique identifier and maintains its own message sending channel.
@@ -47,7 +47,9 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn id(&self) -> u64 { self.id }
+    pub fn id(&self) -> u64 {
+        self.id
+    }
 
     pub async fn send(&self, payload: Bytes) -> Result<()> {
         self.send_tx
@@ -67,7 +69,7 @@ impl Session {
 }
 
 /// Configuration for establishing a FIX session.
-/// 
+///
 /// Contains all the necessary parameters to initiate a connection
 /// and establish a FIX session with a counterparty.
 #[derive(Debug, Clone)]
@@ -85,11 +87,13 @@ pub struct SessionConfig {
 }
 
 impl SessionConfig {
-    pub fn builder() -> SessionConfigBuilder { SessionConfigBuilder::default() }
+    pub fn builder() -> SessionConfigBuilder {
+        SessionConfigBuilder::default()
+    }
 }
 
 /// Builder pattern implementation for constructing SessionConfig instances.
-/// 
+///
 /// Provides a fluent interface for setting session configuration parameters
 /// with validation and default values.
 #[derive(Debug, Default)]
@@ -107,16 +111,35 @@ pub struct SessionConfigBuilder {
 }
 
 impl SessionConfigBuilder {
-    pub fn host(mut self, host: impl Into<String>) -> Self { self.host = Some(host.into()); self }
-    pub fn port(mut self, port: u16) -> Self { self.port = Some(port); self }
-    pub fn sender_comp_id(mut self, v: impl Into<String>) -> Self { self.sender_comp_id = Some(v.into()); self }
-    pub fn target_comp_id(mut self, v: impl Into<String>) -> Self { self.target_comp_id = Some(v.into()); self }
-    pub fn heartbeat_interval_secs(mut self, v: u32) -> Self { self.heartbeat_interval_secs = Some(v); self }
+    pub fn host(mut self, host: impl Into<String>) -> Self {
+        self.host = Some(host.into());
+        self
+    }
+    pub fn port(mut self, port: u16) -> Self {
+        self.port = Some(port);
+        self
+    }
+    pub fn sender_comp_id(mut self, v: impl Into<String>) -> Self {
+        self.sender_comp_id = Some(v.into());
+        self
+    }
+    pub fn target_comp_id(mut self, v: impl Into<String>) -> Self {
+        self.target_comp_id = Some(v.into());
+        self
+    }
+    pub fn heartbeat_interval_secs(mut self, v: u32) -> Self {
+        self.heartbeat_interval_secs = Some(v);
+        self
+    }
 
     pub fn build(self) -> Result<SessionConfig> {
         Ok(SessionConfig {
-            host: self.host.ok_or_else(|| FixgError::InvalidConfig("host missing".into()))?,
-            port: self.port.ok_or_else(|| FixgError::InvalidConfig("port missing".into()))?,
+            host: self
+                .host
+                .ok_or_else(|| FixgError::InvalidConfig("host missing".into()))?,
+            port: self
+                .port
+                .ok_or_else(|| FixgError::InvalidConfig("port missing".into()))?,
             sender_comp_id: self
                 .sender_comp_id
                 .ok_or_else(|| FixgError::InvalidConfig("sender_comp_id missing".into()))?,
@@ -131,5 +154,11 @@ impl SessionConfigBuilder {
 // Internal helper to create a Session with a send channel
 pub(crate) fn new_session(session_id: u64) -> (Session, mpsc::Receiver<OutboundPayload>) {
     let (tx, rx) = mpsc::channel::<OutboundPayload>(1024);
-    (Session { id: session_id, send_tx: tx }, rx)
+    (
+        Session {
+            id: session_id,
+            send_tx: tx,
+        },
+        rx,
+    )
 }

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Configuration settings for the FIX gateway.
-/// 
+///
 /// This struct contains all the necessary configuration options to set up and run
 /// a FIX gateway, including networking, storage, and authentication settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,34 +31,36 @@ impl Default for GatewayConfig {
             aeron_channel: "aeron:ipc".to_string(),
             bind_address: "0.0.0.0:4050".parse().unwrap(),
             async_runtime: AsyncRuntime::MultiThread,
-            storage: StorageBackend::File { base_dir: PathBuf::from("data/journal") },
+            storage: StorageBackend::File {
+                base_dir: PathBuf::from("data/journal"),
+            },
             auth_strategy: Arc::new(AcceptAllAuth),
         }
     }
 }
 
 /// Storage backend options for message persistence.
-/// 
+///
 /// Defines different storage mechanisms that can be used to persist
 /// FIX messages for replay and audit purposes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StorageBackend {
     /// File-based storage using local filesystem
-    File { 
+    File {
         /// Base directory where message files will be stored
-        base_dir: PathBuf 
+        base_dir: PathBuf,
     },
     /// Aeron-based storage using Aeron Archive
-    Aeron { 
+    Aeron {
         /// Aeron channel string for the archive
-        archive_channel: String, 
+        archive_channel: String,
         /// Stream ID for the archive
-        stream_id: i32 
+        stream_id: i32,
     },
 }
 
 /// Configuration settings for a FIX client connection.
-/// 
+///
 /// Contains the necessary settings to establish a client connection
 /// to a FIX gateway and manage its runtime behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,12 +73,15 @@ pub struct FixClientConfig {
 
 impl FixClientConfig {
     pub fn new(library_id: i32) -> Self {
-        Self { library_id, async_runtime: AsyncRuntime::MultiThread }
+        Self {
+            library_id,
+            async_runtime: AsyncRuntime::MultiThread,
+        }
     }
 }
 
 /// Async runtime configuration options.
-/// 
+///
 /// Specifies the type of Tokio runtime to use for async operations.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum AsyncRuntime {
@@ -92,7 +97,7 @@ pub trait AuthStrategy: Send + Sync {
 }
 
 /// Default permissive authentication strategy that accepts all logons.
-/// 
+///
 /// This is a simple authentication implementation that allows all
 /// incoming logon requests without any validation. Useful for
 /// development and testing environments.
@@ -100,5 +105,7 @@ pub trait AuthStrategy: Send + Sync {
 pub struct AcceptAllAuth;
 
 impl AuthStrategy for AcceptAllAuth {
-    fn validate_logon(&self, _sender_comp_id: &str, _target_comp_id: &str) -> bool { true }
+    fn validate_logon(&self, _sender_comp_id: &str, _target_comp_id: &str) -> bool {
+        true
+    }
 }
