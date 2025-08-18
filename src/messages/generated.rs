@@ -2,36 +2,16 @@
 use crate::protocol::{FixMessage, FixMsgType};
 use std::convert::TryFrom;
 
-/// Administrative FIX messages used for session management.
-///
-/// These messages handle the establishment, maintenance, and termination
-/// of FIX sessions between counterparties.
 #[derive(Debug, Clone)]
 pub enum AdminMessage {
-    /// Logon message to initiate a FIX session
     Logon {
-        /// Heartbeat interval in seconds
         heart_bt_int_secs: Option<u32>,
-        /// Sender's company ID
         sender_comp_id: Option<String>,
-        /// Target company ID
         target_comp_id: Option<String>,
     },
-    /// Heartbeat message to maintain session connectivity
-    Heartbeat {
-        /// Test request ID if this heartbeat is in response to a test request
-        test_req_id: Option<String>,
-    },
-    /// Test request message to verify session connectivity
-    TestRequest {
-        /// Unique identifier for this test request
-        id: String,
-    },
-    /// Logout message to terminate a FIX session
-    Logout {
-        /// Optional reason for logout
-        text: Option<String>,
-    },
+    Heartbeat { test_req_id: Option<String> },
+    TestRequest { id: String },
+    Logout { text: Option<String> },
 }
 
 impl TryFrom<&FixMessage> for AdminMessage {
@@ -42,11 +22,7 @@ impl TryFrom<&FixMessage> for AdminMessage {
                 let hb = msg.fields.get(&108).and_then(|s| s.parse::<u32>().ok());
                 let sender = msg.fields.get(&49).cloned();
                 let target = msg.fields.get(&56).cloned();
-                Ok(AdminMessage::Logon {
-                    heart_bt_int_secs: hb,
-                    sender_comp_id: sender,
-                    target_comp_id: target,
-                })
+                Ok(AdminMessage::Logon { heart_bt_int_secs: hb, sender_comp_id: sender, target_comp_id: target })
             }
             FixMsgType::Heartbeat => {
                 let id = msg.fields.get(&112).cloned();
@@ -63,9 +39,7 @@ impl TryFrom<&FixMessage> for AdminMessage {
                 let text = msg.fields.get(&58).cloned();
                 Ok(AdminMessage::Logout { text })
             }
-            FixMsgType::ResendRequest | FixMsgType::SequenceReset | FixMsgType::Unknown(_) => {
-                Err(())
-            }
+            FixMsgType::ResendRequest | FixMsgType::SequenceReset | FixMsgType::Unknown(_) => Err(()),
         }
     }
 }
@@ -73,20 +47,14 @@ impl TryFrom<&FixMessage> for AdminMessage {
 impl AdminMessage {
     pub fn into_fix(self, sender_comp_id: &str, target_comp_id: &str) -> FixMessage {
         let mut msg = match self {
-            AdminMessage::Logon {
-                heart_bt_int_secs, ..
-            } => {
+            AdminMessage::Logon { heart_bt_int_secs, .. } => {
                 let mut m = FixMessage::new(FixMsgType::Logon);
-                if let Some(hb) = heart_bt_int_secs {
-                    m.fields.insert(108, hb.to_string());
-                }
+                if let Some(hb) = heart_bt_int_secs { m.fields.insert(108, hb.to_string()); }
                 m
             }
             AdminMessage::Heartbeat { test_req_id } => {
                 let mut m = FixMessage::new(FixMsgType::Heartbeat);
-                if let Some(id) = test_req_id {
-                    m.fields.insert(112, id);
-                }
+                if let Some(id) = test_req_id { m.fields.insert(112, id); }
                 m
             }
             AdminMessage::TestRequest { id } => {
@@ -96,9 +64,7 @@ impl AdminMessage {
             }
             AdminMessage::Logout { text } => {
                 let mut m = FixMessage::new(FixMsgType::Logout);
-                if let Some(t) = text {
-                    m.fields.insert(58, t);
-                }
+                if let Some(t) = text { m.fields.insert(58, t); }
                 m
             }
         };
