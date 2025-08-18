@@ -11,9 +11,15 @@ use tokio::time::{self, Duration, Instant};
 
 use crate::config::StorageBackend;
 
+/// Unique identifier for a FIX session based on company IDs.
+/// 
+/// Used to distinguish between different sessions for storage and
+/// retrieval purposes in the message store.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionKey {
+    /// Sender's company identifier
     pub sender_comp_id: String,
+    /// Target company identifier
     pub target_comp_id: String,
 }
 
@@ -29,31 +35,64 @@ fn sanitize(s: &str) -> String {
         .collect()
 }
 
+/// Direction of message flow relative to this system.
+/// 
+/// Indicates whether a message was received from or sent to a counterparty.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum Direction { Inbound, Outbound }
+pub enum Direction { 
+    /// Message received from counterparty
+    Inbound, 
+    /// Message sent to counterparty
+    Outbound 
+}
 
+/// A persisted message record with metadata for storage and retrieval.
+/// 
+/// Contains all necessary information to store and later retrieve
+/// a FIX message, including session context and sequencing information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredMessageRecord {
+    /// Session this message belongs to
     pub session: SessionKey,
+    /// Direction of the message (inbound/outbound)
     pub direction: Direction,
+    /// Sequence number of the message (if applicable)
     pub seq: Option<u32>,
+    /// Timestamp when message was processed (milliseconds since epoch)
     pub ts_millis: u64,
+    /// Base64-encoded message payload
     pub payload_b64: String,
 }
 
+/// Policy for when to sync data to persistent storage.
+/// 
+/// Controls the trade-off between data safety and performance
+/// by determining when writes are flushed to disk.
 #[derive(Debug, Clone)]
 pub enum DurabilityPolicy {
+    /// Sync to disk after every write (safest, slowest)
     Always,
+    /// Sync to disk at specified intervals in milliseconds
     IntervalMs(u64),
+    /// Never explicitly sync (fastest, least safe)
     Disabled,
 }
 
+/// Configuration settings for the message storage system.
+/// 
+/// Controls various aspects of message persistence including
+/// performance tuning and durability guarantees.
 #[derive(Debug, Clone)]
 pub struct StorageConfig {
+    /// Base directory for storing message files
     pub base_dir: PathBuf,
+    /// Channel capacity for buffering messages before writing
     pub channel_capacity: usize,
+    /// Maximum number of messages to batch before flushing
     pub batch_max: usize,
+    /// How often to flush pending writes (milliseconds)
     pub flush_interval_ms: u64,
+    /// Policy for syncing data to persistent storage
     pub durability: DurabilityPolicy,
 }
 
@@ -165,9 +204,15 @@ pub fn make_store(backend: &StorageBackend) -> Arc<dyn MessageStore> {
     }
 }
 
+/// File-based implementation of message storage.
+/// 
+/// Stores FIX messages in JSON Lines format with separate index files
+/// for efficient sequence number-based retrieval.
 #[derive(Clone)]
 pub struct FileMessageStore {
+    /// Channel for sending messages to storage worker
     tx: mpsc::Sender<StoredMessageRecord>,
+    /// Storage configuration settings
     cfg: StorageConfig,
 }
 
