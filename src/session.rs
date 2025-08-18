@@ -1,6 +1,7 @@
 use crate::error::{FixgError, Result};
 use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot};
+use crate::messages::AdminMessage;
 
 #[derive(Debug, Clone, Copy)]
 pub enum DisconnectReason {
@@ -12,9 +13,15 @@ pub enum DisconnectReason {
 }
 
 #[derive(Debug, Clone)]
+pub enum OutboundPayload {
+    Raw(Bytes),
+    Admin(AdminMessage),
+}
+
+#[derive(Debug, Clone)]
 pub struct Session {
     id: u64,
-    send_tx: mpsc::Sender<Bytes>,
+    send_tx: mpsc::Sender<OutboundPayload>,
 }
 
 impl Session {
@@ -22,7 +29,15 @@ impl Session {
 
     pub async fn send(&self, payload: Bytes) -> Result<()> {
         self.send_tx
-            .send(payload)
+            .send(OutboundPayload::Raw(payload))
+            .await
+            .map_err(|_| FixgError::ChannelClosed)
+            .map(|_| ())
+    }
+
+    pub async fn send_admin(&self, msg: AdminMessage) -> Result<()> {
+        self.send_tx
+            .send(OutboundPayload::Admin(msg))
             .await
             .map_err(|_| FixgError::ChannelClosed)
             .map(|_| ())
@@ -74,7 +89,7 @@ impl SessionConfigBuilder {
 }
 
 // Internal helper to create a Session with a send channel
-pub(crate) fn new_session(session_id: u64) -> (Session, mpsc::Receiver<Bytes>) {
-    let (tx, rx) = mpsc::channel::<Bytes>(1024);
+pub(crate) fn new_session(session_id: u64) -> (Session, mpsc::Receiver<OutboundPayload>) {
+    let (tx, rx) = mpsc::channel::<OutboundPayload>(1024);
     (Session { id: session_id, send_tx: tx }, rx)
 }
