@@ -244,13 +244,13 @@ pub fn make_store(backend: &StorageBackend) -> Arc<dyn MessageStore> {
     match backend {
         StorageBackend::File { base_dir } => Arc::new(FileMessageStore::new(base_dir.clone())),
         StorageBackend::Aeron {
-            archive_channel: _,
-            stream_id: _,
+            archive_channel: _archive_channel,
+            stream_id: _stream_id,
         } => {
             #[cfg(feature = "aeron-ffi")]
             {
                 Arc::new(
-                    AeronMessageStore::new_with_params(archive_channel, *stream_id)
+                    AeronMessageStore::new_with_params(_archive_channel.as_str(), *_stream_id)
                         .expect("AeronMessageStore init"),
                 )
             }

@@ -203,11 +203,9 @@ pub fn decode(buf: &[u8]) -> Result<FixMessage, String> {
     let mut body_counted = 0usize;
     for f in fields.iter() {
         let s = std::str::from_utf8(f).unwrap();
-        if !seen_8 {
-            if s.starts_with("8=") {
-                seen_8 = true;
-                continue;
-            }
+        if !seen_8 && s.starts_with("8=") {
+            seen_8 = true;
+            continue;
         }
         if !seen_9 {
             if s.starts_with("9=") {

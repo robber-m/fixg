@@ -1,5 +1,3 @@
-#![cfg(feature = "aeron-ffi")]
-
 use libc::{c_char, c_int, c_longlong, c_void};
 use std::ffi::CString;
 use std::ptr::null_mut;
