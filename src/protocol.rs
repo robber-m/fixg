@@ -1,6 +1,7 @@
 use bytes::Buf;
 use bytes::{BufMut, Bytes, BytesMut};
 use std::collections::HashMap;
+use std::io::{self, Write};
 
 pub const SOH: u8 = 0x01; // ASCII control-A
 
@@ -29,7 +30,7 @@ pub enum FixMsgType {
 /// Represents a parsed FIX message with its constituent fields.
 ///
 /// This structure contains the standard FIX message header fields and
-/// a map of all additional fields present in the message body.
+/// a map of all additional fields present in the message message.
 #[derive(Debug, Clone)]
 pub struct FixMessage {
     /// FIX protocol version (tag 8) - e.g., "FIX.4.4"
@@ -98,53 +99,57 @@ fn parse_msg_type(s: &str) -> FixMsgType {
     }
 }
 
-pub fn encode(mut msg: FixMessage) -> Bytes {
-    // Build header and body first without checksum to compute 9 and 10
-    let mut body = BytesMut::with_capacity(256);
+/// Encodes a FIX message to bytes
+pub fn encode(msg: &FixMessage) -> Result<Bytes, String> {
+    let mut buffer = Vec::new();
+    encode_to_writer(msg, &mut buffer)?;
+    Ok(Bytes::from(buffer))
+}
 
-    // Required standard header fields inside body: 35
-    // Other fields are appended from msg.fields (excluding 8,9,10)
-    body.extend_from_slice(b"35=");
-    body.extend_from_slice(msg_type_to_str(&msg.msg_type).as_bytes());
-    body.put_u8(SOH);
+/// Encodes a FIX message to a writer (zero-allocation when reusing buffer)
+pub fn encode_to_writer<W: Write>(msg: &FixMessage, writer: &mut W) -> Result<(), String> {
+    // Calculate body length (excluding BeginString, BodyLength, and CheckSum)
+    let mut body_fields = Vec::new();
 
-    // Append all user fields sorted by tag for determinism (not required, but helpful)
-    let mut tags: Vec<_> = msg.fields.keys().copied().collect();
-    tags.sort_unstable();
-    for tag in tags {
-        if tag == 8 || tag == 9 || tag == 10 || tag == 35 {
-            continue;
-        }
-        body.extend_from_slice(tag.to_string().as_bytes());
-        body.put_u8(b'=');
-        if let Some(v) = msg.fields.get(&tag) {
-            body.extend_from_slice(v.as_bytes());
-        }
-        body.put_u8(SOH);
+    // Add MsgType first
+    body_fields.push((35, msg_type_as_str(&msg.msg_type)));
+
+    // Add other fields (sorted by tag number for consistency)
+    let mut sorted_fields: Vec<_> = msg.fields.iter().collect();
+    sorted_fields.sort_by_key(|(tag, _)| *tag);
+
+    for (tag, value) in sorted_fields {
+        body_fields.push((*tag, value.as_str()));
     }
 
-    // After body is ready, compute BodyLength as number of bytes after tag 9 field up to and including last SOH before tag 10
-    let body_length = body.len();
+    // Calculate body length
+    let body_length: usize = body_fields.iter()
+        .map(|(tag, value)| tag.to_string().len() + 1 + value.len() + 1) // tag=value\x01
+        .sum();
 
-    let mut out = BytesMut::with_capacity(32 + body_length + 16);
-    // 8=BeginString
-    out.extend_from_slice(b"8=");
-    out.extend_from_slice(msg.begin_string.as_bytes());
-    out.put_u8(SOH);
-    // 9=BodyLength
-    out.extend_from_slice(b"9=");
-    out.extend_from_slice(body_length.to_string().as_bytes());
-    out.put_u8(SOH);
-    // Body
-    out.extend_from_slice(&body);
+    // Write BeginString
+    write!(writer, "8=FIX.4.4{}", SOH as char).map_err(|e| e.to_string())?;
 
-    // 10=CheckSum (sum of all bytes up to and including the SOH before 10=)
-    let cks = compute_checksum(&out);
-    out.extend_from_slice(b"10=");
-    out.extend_from_slice(format!("{:03}", cks).as_bytes());
-    out.put_u8(SOH);
+    // Write BodyLength
+    write!(writer, "9={}{}", body_length, SOH as char).map_err(|e| e.to_string())?;
 
-    out.freeze()
+    // Write body fields
+    for (tag, value) in body_fields {
+        write!(writer, "{}={}{}", tag, value, SOH as char).map_err(|e| e.to_string())?;
+    }
+
+    // Calculate checksum by re-creating the message up to this point
+    let mut temp_buffer = Vec::new();
+    write!(temp_buffer, "8=FIX.4.4{}", SOH as char).unwrap();
+    write!(temp_buffer, "9={}{}", body_length, SOH as char).unwrap();
+    for (tag, value) in &body_fields {
+        write!(temp_buffer, "{}={}{}", tag, value, SOH as char).unwrap();
+    }
+
+    let checksum = temp_buffer.iter().fold(0u8, |acc, &b| acc.wrapping_add(b)) % 256;
+    write!(writer, "10={:03}{}", checksum, SOH as char).map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 pub fn decode(buf: &[u8]) -> Result<FixMessage, String> {

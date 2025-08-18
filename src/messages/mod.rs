@@ -1,7 +1,14 @@
 use bytes::{Bytes, BytesMut};
 
 pub mod generated;
-pub use generated::AdminMessage;
+pub use generated::{
+    AdminMessage, 
+    LogonBuilder, 
+    TestRequestBuilder, 
+    LogoutBuilder,
+    MessageDecoder,
+    MessageEncoder,
+};
 
 /// FIX Logon message structure.
 ///
