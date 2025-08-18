@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AsyncRuntime"],"struct":["FixClientConfig","GatewayConfig"]};
+window.SIDEBAR_ITEMS = {"enum":["AsyncRuntime","StorageBackend"],"struct":["AcceptAllAuth","FixClientConfig","GatewayConfig"],"trait":["AuthStrategy"]};

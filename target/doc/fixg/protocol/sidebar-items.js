@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SOH"],"enum":["FixMsgType"],"fn":["build_heartbeat","build_logon","build_logout","build_resend_request","build_sequence_reset","build_test_request","decode","encode","msg_type_as_str","try_extract_one"],"struct":["FixMessage"]};

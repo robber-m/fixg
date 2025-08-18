@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Direction","DurabilityPolicy"],"fn":["make_store"],"struct":["FileMessageStore","SessionKey","StorageConfig","StoredMessageRecord"],"trait":["MessageStore"]};

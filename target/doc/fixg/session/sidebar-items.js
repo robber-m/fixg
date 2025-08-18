@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["DisconnectReason"],"struct":["Session","SessionConfig","SessionConfigBuilder"]};
+window.SIDEBAR_ITEMS = {"enum":["DisconnectReason","OutboundPayload"],"struct":["Session","SessionConfig","SessionConfigBuilder"]};
