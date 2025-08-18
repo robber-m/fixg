@@ -1,16 +1,18 @@
 use crate::config::FixClientConfig;
 use crate::error::{FixgError, Result};
-use crate::gateway::{GatewayHandle, GatewayToClientEvent, GatewayClientCommand, GatewaySessionHandle};
-use crate::session::{new_session, DisconnectReason, Session, SessionConfig, OutboundPayload};
+use crate::gateway::{
+    GatewayClientCommand, GatewayHandle, GatewaySessionHandle, GatewayToClientEvent,
+};
+use crate::messages::AdminMessage;
+use crate::protocol;
+use crate::session::{new_session, DisconnectReason, OutboundPayload, Session, SessionConfig};
 use async_trait::async_trait;
 use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot};
-use crate::messages::AdminMessage;
-use crate::protocol;
 // Removed unused import
 
 /// Represents an inbound FIX message received from a counterparty.
-/// 
+///
 /// Contains both the raw message payload and the parsed message type
 /// for efficient processing by application handlers.
 #[derive(Debug, Clone)]
@@ -23,9 +25,15 @@ pub struct InboundMessage {
 }
 
 impl InboundMessage {
-    pub fn msg_type(&self) -> &str { &self.msg_type }
-    pub fn body(&self) -> &Bytes { &self.payload }
-    pub fn admin(&self) -> Option<&AdminMessage> { self.admin.as_ref() }
+    pub fn msg_type(&self) -> &str {
+        &self.msg_type
+    }
+    pub fn body(&self) -> &Bytes {
+        &self.payload
+    }
+    pub fn admin(&self) -> Option<&AdminMessage> {
+        self.admin.as_ref()
+    }
 }
 
 #[async_trait]
@@ -36,7 +44,7 @@ pub trait FixHandler: Send {
 }
 
 /// FIX client for connecting to and interacting with a FIX gateway.
-/// 
+///
 /// Provides the main interface for applications to establish FIX sessions,
 /// send messages, and handle incoming events from the gateway.
 pub struct FixClient {
@@ -88,7 +96,10 @@ impl FixClient {
                 match payload {
                     OutboundPayload::Raw(bytes) => {
                         let _ = cmd_tx
-                            .send(GatewayClientCommand::Send { session_id, payload: bytes })
+                            .send(GatewayClientCommand::Send {
+                                session_id,
+                                payload: bytes,
+                            })
                             .await;
                     }
                     OutboundPayload::Admin(msg) => {
@@ -121,7 +132,11 @@ impl FixClient {
                         handler.on_session_active(session).await;
                     }
                 }
-                GatewayToClientEvent::InboundMessage { session_id: _, msg_type, payload } => {
+                GatewayToClientEvent::InboundMessage {
+                    session_id: _,
+                    msg_type,
+                    payload,
+                } => {
                     if let Some(ref session) = self.current_session {
                         // Try to parse typed admin message
                         let admin = match protocol::decode(&payload) {
@@ -129,11 +144,21 @@ impl FixClient {
                             Err(_) => None,
                         };
                         handler
-                            .on_message(session, InboundMessage { msg_type, payload, admin })
+                            .on_message(
+                                session,
+                                InboundMessage {
+                                    msg_type,
+                                    payload,
+                                    admin,
+                                },
+                            )
                             .await;
                     }
                 }
-                GatewayToClientEvent::Disconnected { session_id: _, reason } => {
+                GatewayToClientEvent::Disconnected {
+                    session_id: _,
+                    reason,
+                } => {
                     if let Some(ref session) = self.current_session {
                         handler.on_disconnect(session, reason).await;
                     }

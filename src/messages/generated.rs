@@ -9,9 +9,15 @@ pub enum AdminMessage {
         sender_comp_id: Option<String>,
         target_comp_id: Option<String>,
     },
-    Heartbeat { test_req_id: Option<String> },
-    TestRequest { id: String },
-    Logout { text: Option<String> },
+    Heartbeat {
+        test_req_id: Option<String>,
+    },
+    TestRequest {
+        id: String,
+    },
+    Logout {
+        text: Option<String>,
+    },
 }
 
 impl TryFrom<&FixMessage> for AdminMessage {
@@ -22,7 +28,11 @@ impl TryFrom<&FixMessage> for AdminMessage {
                 let hb = msg.fields.get(&108).and_then(|s| s.parse::<u32>().ok());
                 let sender = msg.fields.get(&49).cloned();
                 let target = msg.fields.get(&56).cloned();
-                Ok(AdminMessage::Logon { heart_bt_int_secs: hb, sender_comp_id: sender, target_comp_id: target })
+                Ok(AdminMessage::Logon {
+                    heart_bt_int_secs: hb,
+                    sender_comp_id: sender,
+                    target_comp_id: target,
+                })
             }
             FixMsgType::Heartbeat => {
                 let id = msg.fields.get(&112).cloned();
@@ -39,7 +49,9 @@ impl TryFrom<&FixMessage> for AdminMessage {
                 let text = msg.fields.get(&58).cloned();
                 Ok(AdminMessage::Logout { text })
             }
-            FixMsgType::ResendRequest | FixMsgType::SequenceReset | FixMsgType::Unknown(_) => Err(()),
+            FixMsgType::ResendRequest | FixMsgType::SequenceReset | FixMsgType::Unknown(_) => {
+                Err(())
+            }
         }
     }
 }
@@ -47,14 +59,20 @@ impl TryFrom<&FixMessage> for AdminMessage {
 impl AdminMessage {
     pub fn into_fix(self, sender_comp_id: &str, target_comp_id: &str) -> FixMessage {
         let mut msg = match self {
-            AdminMessage::Logon { heart_bt_int_secs, .. } => {
+            AdminMessage::Logon {
+                heart_bt_int_secs, ..
+            } => {
                 let mut m = FixMessage::new(FixMsgType::Logon);
-                if let Some(hb) = heart_bt_int_secs { m.fields.insert(108, hb.to_string()); }
+                if let Some(hb) = heart_bt_int_secs {
+                    m.fields.insert(108, hb.to_string());
+                }
                 m
             }
             AdminMessage::Heartbeat { test_req_id } => {
                 let mut m = FixMessage::new(FixMsgType::Heartbeat);
-                if let Some(id) = test_req_id { m.fields.insert(112, id); }
+                if let Some(id) = test_req_id {
+                    m.fields.insert(112, id);
+                }
                 m
             }
             AdminMessage::TestRequest { id } => {
@@ -64,7 +82,9 @@ impl AdminMessage {
             }
             AdminMessage::Logout { text } => {
                 let mut m = FixMessage::new(FixMsgType::Logout);
-                if let Some(t) = text { m.fields.insert(58, t); }
+                if let Some(t) = text {
+                    m.fields.insert(58, t);
+                }
                 m
             }
         };
