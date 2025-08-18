@@ -19,8 +19,13 @@ fn now_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
+/// Handle for communicating with a running FIX gateway.
+/// 
+/// Provides a thread-safe interface for clients to register with
+/// the gateway and send commands for session management.
 #[derive(Debug, Clone)]
 pub struct GatewayHandle {
+    /// Channel for sending commands to the gateway
     cmd_tx: mpsc::Sender<GatewayCommand>,
 }
 
@@ -35,6 +40,10 @@ impl GatewayHandle {
     }
 }
 
+/// The main FIX gateway that manages sessions and client connections.
+/// 
+/// Acts as a central hub for all FIX communication, handling both
+/// incoming acceptor connections and outgoing initiator sessions.
 pub struct Gateway;
 
 impl Gateway {

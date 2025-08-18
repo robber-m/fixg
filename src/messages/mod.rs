@@ -3,22 +3,49 @@ use bytes::{Bytes, BytesMut};
 pub mod generated;
 pub use generated::AdminMessage;
 
+/// FIX Logon message structure.
+/// 
+/// Represents a FIX Logon message used to initiate a session.
+/// Currently a placeholder structure for future expansion.
 #[derive(Debug, Clone)]
 pub struct Logon;
 
+/// Execution report type indicating how an order was processed.
+/// 
+/// Defines the different ways an order can be executed or processed
+/// in the trading system.
 #[derive(Debug, Clone)]
-pub enum ExecType { Fill }
+pub enum ExecType { 
+    /// Order was completely filled
+    Fill 
+}
 
+/// Current status of an order in the trading system.
+/// 
+/// Indicates the current state of an order from submission to completion.
 #[derive(Debug, Clone)]
-pub enum OrdStatus { Filled }
+pub enum OrdStatus { 
+    /// Order has been completely filled
+    Filled 
+}
 
+/// FIX Execution Report message containing order execution details.
+/// 
+/// Reports the status and execution details of an order, including
+/// pricing, quantity, and execution type information.
 #[derive(Debug, Clone)]
 pub struct ExecutionReport {
+    /// Client-assigned order identifier
     cl_ord_id: String,
+    /// Exchange-assigned order identifier
     order_id: String,
+    /// Type of execution that occurred
     exec_type: ExecType,
+    /// Current status of the order
     ord_status: OrdStatus,
+    /// Price of the last fill
     last_px: f64,
+    /// Quantity of the last fill
     last_qty: i64,
 }
 
@@ -26,13 +53,23 @@ impl ExecutionReport {
     pub fn builder() -> ExecutionReportBuilder { ExecutionReportBuilder::default() }
 }
 
+/// Builder pattern implementation for constructing ExecutionReport instances.
+/// 
+/// Provides a fluent interface for setting execution report fields
+/// with optional validation and default values.
 #[derive(Debug, Default)]
 pub struct ExecutionReportBuilder {
+    /// Client order ID being built
     cl_ord_id: Option<String>,
+    /// Order ID being built
     order_id: Option<String>,
+    /// Execution type being built
     exec_type: Option<ExecType>,
+    /// Order status being built
     ord_status: Option<OrdStatus>,
+    /// Last execution price being built
     last_px: Option<f64>,
+    /// Last execution quantity being built
     last_qty: Option<i64>,
 }
 

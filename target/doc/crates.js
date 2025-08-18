@@ -1,2 +1,2 @@
-window.ALL_CRATES = ["fixg"];
-//{"start":21,"fragment_lengths":[6]}
+window.ALL_CRATES = ["async_trait","base64","bytes","fixg","futures","futures_channel","futures_core","futures_executor","futures_io","futures_macro","futures_sink","futures_task","futures_util","itoa","libc","memchr","mio","once_cell","pin_project_lite","pin_utils","proc_macro2","quote","ryu","serde","serde_derive","serde_json","slab","socket2","syn","thiserror","thiserror_impl","tokio","tokio_macros","tracing","tracing_attributes","tracing_core","unicode_ident"];
+//{"start":21,"fragment_lengths":[13,9,8,7,10,18,15,19,13,16,15,15,15,7,7,9,6,12,19,12,14,8,6,8,15,13,7,10,6,12,17,8,15,10,21,15,16]}

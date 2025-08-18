@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ExecType","OrdStatus"],"struct":["ExecutionReport","ExecutionReportBuilder","Logon"]};
+window.SIDEBAR_ITEMS = {"enum":["ExecType","OrdStatus"],"mod":["generated"],"struct":["ExecutionReport","ExecutionReportBuilder","Logon"]};

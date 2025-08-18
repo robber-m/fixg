@@ -4,22 +4,41 @@ use bytes::Buf;
 
 pub const SOH: u8 = 0x01; // ASCII control-A
 
+/// FIX message types as defined in the FIX protocol specification.
+/// 
+/// Represents the different types of messages that can be sent and received
+/// in a FIX session, corresponding to the MsgType (tag 35) field values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FixMsgType {
-    Logon,          // 35=A
-    Heartbeat,      // 35=0
-    TestRequest,    // 35=1
-    Logout,         // 35=5
-    ResendRequest,  // 35=2
-    SequenceReset,  // 35=4
+    /// Logon message (35=A) - initiates a FIX session
+    Logon,
+    /// Heartbeat message (35=0) - maintains session connectivity
+    Heartbeat,
+    /// Test Request message (35=1) - requests a heartbeat response
+    TestRequest,
+    /// Logout message (35=5) - terminates a FIX session
+    Logout,
+    /// Resend Request message (35=2) - requests retransmission of messages
+    ResendRequest,
+    /// Sequence Reset message (35=4) - resets message sequence numbers
+    SequenceReset,
+    /// Unknown or unsupported message type
     Unknown(String),
 }
 
+/// Represents a parsed FIX message with its constituent fields.
+/// 
+/// This structure contains the standard FIX message header fields and
+/// a map of all additional fields present in the message body.
 #[derive(Debug, Clone)]
 pub struct FixMessage {
-    pub begin_string: String, // 8
-    pub body_length: usize,   // 9 (computed/validated)
-    pub msg_type: FixMsgType, // 35
+    /// FIX protocol version (tag 8) - e.g., "FIX.4.4"
+    pub begin_string: String,
+    /// Message body length (tag 9) - computed and validated during parsing
+    pub body_length: usize,
+    /// Message type (tag 35) - determines the message's purpose
+    pub msg_type: FixMsgType,
+    /// All message fields as tag-value pairs (excluding standard header/trailer)
     pub fields: HashMap<u32, String>,
 }
 

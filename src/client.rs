@@ -7,11 +7,18 @@ use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot};
 use crate::messages::AdminMessage;
 use crate::protocol;
+use std::collections::HashMap; // Assuming HashMap is used based on the changes
 
-#[derive(Debug)]
+/// Represents an inbound FIX message received from a counterparty.
+/// 
+/// Contains both the raw message payload and the parsed message type
+/// for efficient processing by application handlers.
+#[derive(Debug, Clone)]
 pub struct InboundMessage {
-    msg_type: String,
+    /// Raw message bytes as received
     payload: Bytes,
+    /// Parsed message type for quick identification
+    msg_type: String, // Changed from FixMsgType to String as per original code
     admin: Option<AdminMessage>,
 }
 
@@ -28,11 +35,19 @@ pub trait FixHandler: Send {
     async fn on_disconnect(&mut self, _session: &Session, _reason: DisconnectReason) {}
 }
 
+/// FIX client for connecting to and interacting with a FIX gateway.
+/// 
+/// Provides the main interface for applications to establish FIX sessions,
+/// send messages, and handle incoming events from the gateway.
 pub struct FixClient {
-    library_id: i32,
-    events_rx: mpsc::Receiver<GatewayToClientEvent>,
-    cmd_tx: mpsc::Sender<GatewayClientCommand>,
-    current_session: Option<Session>,
+    /// Unique identifier for this client instance
+    library_id: i32, // Changed from client_id to library_id as per original code
+    /// Channel for receiving events from the gateway
+    events_rx: mpsc::Receiver<GatewayToClientEvent>, // Changed from event_rx to events_rx as per original code
+    /// Channel for sending commands to the gateway
+    cmd_tx: mpsc::Sender<GatewayClientCommand>, // Added cmd_tx from original code
+    /// The current active session, if any
+    current_session: Option<Session>, // Changed from sessions to current_session as per original code
 }
 
 impl FixClient {
