@@ -3,24 +3,30 @@ use crate::error::{FixgError, Result};
 use crate::session::DisconnectReason;
 use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::time::{self, Duration, Instant};
 
-use crate::protocol::{self, FixMsgType};
 use crate::messages::AdminMessage;
+use crate::protocol::{self, FixMsgType};
 use crate::session::OutboundPayload;
-use crate::storage::{make_store, MessageStore, StoredMessageRecord, Direction, SessionKey};
+use crate::storage::{make_store, Direction, MessageStore, SessionKey, StoredMessageRecord};
 
 fn now_millis() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 /// Handle for communicating with a running FIX gateway.
-/// 
+///
 /// Provides a thread-safe interface for clients to register with
 /// the gateway and send commands for session management.
 #[derive(Debug, Clone)]
@@ -33,7 +39,10 @@ impl GatewayHandle {
     pub async fn register_client(&self, library_id: i32) -> Result<ClientConnection> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
-            .send(GatewayCommand::RegisterClient { library_id, respond_to: tx })
+            .send(GatewayCommand::RegisterClient {
+                library_id,
+                respond_to: tx,
+            })
             .await
             .map_err(|_| FixgError::ChannelClosed)?;
         rx.await.map_err(|_| FixgError::ChannelClosed)
@@ -41,7 +50,7 @@ impl GatewayHandle {
 }
 
 /// The main FIX gateway that manages sessions and client connections.
-/// 
+///
 /// Acts as a central hub for all FIX communication, handling both
 /// incoming acceptor connections and outgoing initiator sessions.
 pub struct Gateway;
@@ -50,8 +59,10 @@ impl Gateway {
     pub async fn spawn(config: GatewayConfig) -> Result<GatewayHandle> {
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<GatewayCommand>(1024);
         let next_session_id = Arc::new(AtomicU64::new(0));
-        let global_session_senders: Arc<RwLock<HashMap<u64, mpsc::Sender<OutboundPayload>>>> = Arc::new(RwLock::new(HashMap::new()));
-        let clients: Arc<RwLock<Vec<mpsc::Sender<GatewayEvent>>>> = Arc::new(RwLock::new(Vec::new()));
+        let global_session_senders: Arc<RwLock<HashMap<u64, mpsc::Sender<OutboundPayload>>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        let clients: Arc<RwLock<Vec<mpsc::Sender<GatewayEvent>>>> =
+            Arc::new(RwLock::new(Vec::new()));
         let store = make_store(&config.storage);
 
         tokio::spawn({
@@ -107,7 +118,9 @@ impl Gateway {
                                             let mut read_buf = BytesMut::with_capacity(16 * 1024);
 
                                             let mut tick = time::interval(Duration::from_secs(1));
-                                            tick.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
+                                            tick.set_missed_tick_behavior(
+                                                time::MissedTickBehavior::Delay,
+                                            );
 
                                             loop {
                                                 tokio::select! {
@@ -250,9 +263,13 @@ impl Gateway {
 
                 while let Some(cmd) = cmd_rx.recv().await {
                     match cmd {
-                        GatewayCommand::RegisterClient { library_id, respond_to } => {
+                        GatewayCommand::RegisterClient {
+                            library_id,
+                            respond_to,
+                        } => {
                             let (to_client_tx, to_client_rx) = mpsc::channel::<GatewayEvent>(1024);
-                            let (from_client_tx, mut from_client_rx) = mpsc::channel::<ClientCommand>(1024);
+                            let (from_client_tx, mut from_client_rx) =
+                                mpsc::channel::<ClientCommand>(1024);
 
                             // Per-client task managing sessions and I/O
                             let to_client_tx_clone = to_client_tx.clone();
@@ -263,51 +280,93 @@ impl Gateway {
                                 v.push(to_client_tx.clone());
                             }
                             tokio::spawn(async move {
-                                let mut session_senders: HashMap<u64, mpsc::Sender<OutboundPayload>> = HashMap::new();
+                                let mut session_senders: HashMap<
+                                    u64,
+                                    mpsc::Sender<OutboundPayload>,
+                                > = HashMap::new();
 
                                 while let Some(cc) = from_client_rx.recv().await {
                                     match cc {
-                                        ClientCommand::InitiateSession { host, port, sender_comp_id, target_comp_id, heartbeat_interval_secs, respond_to } => {
+                                        ClientCommand::InitiateSession {
+                                            host,
+                                            port,
+                                            sender_comp_id,
+                                            target_comp_id,
+                                            heartbeat_interval_secs,
+                                            respond_to,
+                                        } => {
                                             let addr = format!("{}:{}", host, port);
                                             match TcpStream::connect(addr).await {
                                                 Ok(stream) => {
-                                                    let session_id = next_id.fetch_add(1, Ordering::Relaxed) + 1;
-                                                    let (mut read_half, write_half) = stream.into_split();
+                                                    let session_id =
+                                                        next_id.fetch_add(1, Ordering::Relaxed) + 1;
+                                                    let (mut read_half, write_half) =
+                                                        stream.into_split();
 
                                                     // Create channel for application-driven outbound payloads to this session task
-                                                    let (app_out_tx, mut app_out_rx) = mpsc::channel::<OutboundPayload>(1024);
-                                                    session_senders.insert(session_id, app_out_tx.clone());
+                                                    let (app_out_tx, mut app_out_rx) =
+                                                        mpsc::channel::<OutboundPayload>(1024);
+                                                    session_senders
+                                                        .insert(session_id, app_out_tx.clone());
                                                     {
-                                                        let mut map = global_session_senders.write().await;
+                                                        let mut map =
+                                                            global_session_senders.write().await;
                                                         map.insert(session_id, app_out_tx.clone());
                                                     }
 
                                                     // Spawn session task owning write half, performing handshake, timers, and parsing
-                                                    let to_client_tx_reader = to_client_tx_clone.clone();
+                                                    let to_client_tx_reader =
+                                                        to_client_tx_clone.clone();
                                                     let store = store.clone();
                                                     tokio::spawn(async move {
                                                         let mut write_half = write_half;
-                                                        let hb_interval = Duration::from_secs(heartbeat_interval_secs as u64);
+                                                        let hb_interval = Duration::from_secs(
+                                                            heartbeat_interval_secs as u64,
+                                                        );
                                                         let mut out_seq_num: u32 = 1;
                                                         let mut in_seq_num: u32 = 0;
                                                         let mut last_rx: Instant = Instant::now();
-                                                        let mut test_req_outstanding: Option<String> = None;
-                                                        let sess_key = SessionKey { sender_comp_id: sender_comp_id.clone(), target_comp_id: target_comp_id.clone() };
+                                                        let mut test_req_outstanding: Option<
+                                                            String,
+                                                        > = None;
+                                                        let sess_key = SessionKey {
+                                                            sender_comp_id: sender_comp_id.clone(),
+                                                            target_comp_id: target_comp_id.clone(),
+                                                        };
 
                                                         // Send Logon
-                                                        let mut logon = protocol::build_logon(heartbeat_interval_secs, &sender_comp_id, &target_comp_id);
-                                                        logon.set_field(34, out_seq_num.to_string());
+                                                        let mut logon = protocol::build_logon(
+                                                            heartbeat_interval_secs,
+                                                            &sender_comp_id,
+                                                            &target_comp_id,
+                                                        );
+                                                        logon
+                                                            .set_field(34, out_seq_num.to_string());
                                                         let seq_for_store = out_seq_num;
                                                         out_seq_num += 1;
                                                         let logon_bytes = protocol::encode(logon);
-                                                        let _ = write_half.write_all(&logon_bytes).await;
-                                                        let _ = store.append_bytes(&sess_key, Direction::Outbound, Some(seq_for_store), now_millis(), logon_bytes.as_ref()).await;
+                                                        let _ = write_half
+                                                            .write_all(&logon_bytes)
+                                                            .await;
+                                                        let _ = store
+                                                            .append_bytes(
+                                                                &sess_key,
+                                                                Direction::Outbound,
+                                                                Some(seq_for_store),
+                                                                now_millis(),
+                                                                logon_bytes.as_ref(),
+                                                            )
+                                                            .await;
 
                                                         // Timers
-                                                        let mut interval = time::interval(hb_interval);
-                                                        interval.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
+                                                        let mut interval =
+                                                            time::interval(hb_interval);
+                                                        interval.set_missed_tick_behavior(
+                                                            time::MissedTickBehavior::Delay,
+                                                        );
 
-                                                        let mut read_buf = BytesMut::with_capacity(16 * 1024);
+                                                        let mut read_buf =
+                                                            BytesMut::with_capacity(16 * 1024);
 
                                                         loop {
                                                             tokio::select! {
@@ -471,25 +530,38 @@ impl Gateway {
                                                     });
 
                                                     let _ = to_client_tx_clone
-                                                        .send(GatewayEvent::SessionActive { session_id })
+                                                        .send(GatewayEvent::SessionActive {
+                                                            session_id,
+                                                        })
                                                         .await;
-                                                    let _ = respond_to.send(SessionHandle { session_id });
+                                                    let _ = respond_to
+                                                        .send(SessionHandle { session_id });
                                                 }
                                                 Err(e) => {
-                                                    let _ = respond_to.send(SessionHandle { session_id: 0 });
+                                                    let _ = respond_to
+                                                        .send(SessionHandle { session_id: 0 });
                                                     let _ = to_client_tx_clone
-                                                        .send(GatewayEvent::Disconnected { session_id: 0, reason: DisconnectReason::Unknown })
+                                                        .send(GatewayEvent::Disconnected {
+                                                            session_id: 0,
+                                                            reason: DisconnectReason::Unknown,
+                                                        })
                                                         .await;
                                                     tracing::error!(error = %e, "Failed to connect session");
                                                 }
                                             }
                                         }
-                                        ClientCommand::Send { session_id, payload } => {
+                                        ClientCommand::Send {
+                                            session_id,
+                                            payload,
+                                        } => {
                                             if let Some(tx) = session_senders.get_mut(&session_id) {
-                                                let _ = tx.send(OutboundPayload::Raw(payload)).await;
+                                                let _ =
+                                                    tx.send(OutboundPayload::Raw(payload)).await;
                                             }
                                         }
-                                        ClientCommand::SendAdmin { session_id, msg, .. } => {
+                                        ClientCommand::SendAdmin {
+                                            session_id, msg, ..
+                                        } => {
                                             if let Some(tx) = session_senders.get_mut(&session_id) {
                                                 let _ = tx.send(OutboundPayload::Admin(msg)).await;
                                             }
@@ -504,7 +576,10 @@ impl Gateway {
                                 _library_id: library_id,
                             });
 
-                            _clients.push(ClientConnectionInternal { _library_id: library_id, to_client_tx });
+                            _clients.push(ClientConnectionInternal {
+                                _library_id: library_id,
+                                to_client_tx,
+                            });
                         }
                         GatewayCommand::Shutdown => {
                             break;
@@ -532,22 +607,49 @@ struct ClientConnectionInternal {
 
 #[derive(Debug)]
 pub enum GatewayEvent {
-    SessionActive { session_id: u64 },
-    InboundMessage { session_id: u64, msg_type: String, payload: Bytes },
-    Disconnected { session_id: u64, reason: DisconnectReason },
+    SessionActive {
+        session_id: u64,
+    },
+    InboundMessage {
+        session_id: u64,
+        msg_type: String,
+        payload: Bytes,
+    },
+    Disconnected {
+        session_id: u64,
+        reason: DisconnectReason,
+    },
 }
 
 #[derive(Debug)]
 pub enum GatewayCommand {
-    RegisterClient { library_id: i32, respond_to: oneshot::Sender<ClientConnection> },
+    RegisterClient {
+        library_id: i32,
+        respond_to: oneshot::Sender<ClientConnection>,
+    },
     Shutdown,
 }
 
 #[derive(Debug)]
 pub enum ClientCommand {
-    InitiateSession { host: String, port: u16, sender_comp_id: String, target_comp_id: String, heartbeat_interval_secs: u32, respond_to: oneshot::Sender<SessionHandle> },
-    Send { session_id: u64, payload: Bytes },
-    SendAdmin { session_id: u64, msg: AdminMessage, sender_comp_id: String, target_comp_id: String },
+    InitiateSession {
+        host: String,
+        port: u16,
+        sender_comp_id: String,
+        target_comp_id: String,
+        heartbeat_interval_secs: u32,
+        respond_to: oneshot::Sender<SessionHandle>,
+    },
+    Send {
+        session_id: u64,
+        payload: Bytes,
+    },
+    SendAdmin {
+        session_id: u64,
+        msg: AdminMessage,
+        sender_comp_id: String,
+        target_comp_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -1,11 +1,12 @@
+use bytes::Buf;
 use bytes::{BufMut, Bytes, BytesMut};
 use std::collections::HashMap;
-use bytes::Buf;
+use std::io::{self, Write};
 
 pub const SOH: u8 = 0x01; // ASCII control-A
 
 /// FIX message types as defined in the FIX protocol specification.
-/// 
+///
 /// Represents the different types of messages that can be sent and received
 /// in a FIX session, corresponding to the MsgType (tag 35) field values.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,9 +28,9 @@ pub enum FixMsgType {
 }
 
 /// Represents a parsed FIX message with its constituent fields.
-/// 
+///
 /// This structure contains the standard FIX message header fields and
-/// a map of all additional fields present in the message body.
+/// a map of all additional fields present in the message message.
 #[derive(Debug, Clone)]
 pub struct FixMessage {
     /// FIX protocol version (tag 8) - e.g., "FIX.4.4"
@@ -98,71 +99,94 @@ fn parse_msg_type(s: &str) -> FixMsgType {
     }
 }
 
-pub fn encode(mut msg: FixMessage) -> Bytes {
-    // Build header and body first without checksum to compute 9 and 10
-    let mut body = BytesMut::with_capacity(256);
+/// Encodes a FIX message to bytes
+pub fn encode(msg: &FixMessage) -> Result<Bytes, String> {
+    let mut buffer = Vec::new();
+    encode_to_writer(msg, &mut buffer)?;
+    Ok(Bytes::from(buffer))
+}
 
-    // Required standard header fields inside body: 35
-    // Other fields are appended from msg.fields (excluding 8,9,10)
-    body.extend_from_slice(b"35=");
-    body.extend_from_slice(msg_type_to_str(&msg.msg_type).as_bytes());
-    body.put_u8(SOH);
+/// Encodes a FIX message to a writer (zero-allocation when reusing buffer)
+pub fn encode_to_writer<W: Write>(msg: &FixMessage, writer: &mut W) -> Result<(), String> {
+    // Calculate body length (excluding BeginString, BodyLength, and CheckSum)
+    let mut body_fields = Vec::new();
 
-    // Append all user fields sorted by tag for determinism (not required, but helpful)
-    let mut tags: Vec<_> = msg.fields.keys().copied().collect();
-    tags.sort_unstable();
-    for tag in tags {
-        if tag == 8 || tag == 9 || tag == 10 || tag == 35 { continue; }
-        body.extend_from_slice(tag.to_string().as_bytes());
-        body.put_u8(b'=');
-        if let Some(v) = msg.fields.get(&tag) {
-            body.extend_from_slice(v.as_bytes());
-        }
-        body.put_u8(SOH);
+    // Add MsgType first
+    body_fields.push((35, msg_type_as_str(&msg.msg_type)));
+
+    // Add other fields (sorted by tag number for consistency)
+    let mut sorted_fields: Vec<_> = msg.fields.iter().collect();
+    sorted_fields.sort_by_key(|(tag, _)| *tag);
+
+    for (tag, value) in sorted_fields {
+        body_fields.push((*tag, value.as_str()));
     }
 
-    // After body is ready, compute BodyLength as number of bytes after tag 9 field up to and including last SOH before tag 10
-    let body_length = body.len();
+    // Calculate body length
+    let body_length: usize = body_fields.iter()
+        .map(|(tag, value)| tag.to_string().len() + 1 + value.len() + 1) // tag=value\x01
+        .sum();
 
-    let mut out = BytesMut::with_capacity(32 + body_length + 16);
-    // 8=BeginString
-    out.extend_from_slice(b"8=");
-    out.extend_from_slice(msg.begin_string.as_bytes());
-    out.put_u8(SOH);
-    // 9=BodyLength
-    out.extend_from_slice(b"9=");
-    out.extend_from_slice(body_length.to_string().as_bytes());
-    out.put_u8(SOH);
-    // Body
-    out.extend_from_slice(&body);
+    // Initialize checksum calculation
+    let mut checksum = 0u8;
 
-    // 10=CheckSum (sum of all bytes up to and including the SOH before 10=)
-    let cks = compute_checksum(&out);
-    out.extend_from_slice(b"10=");
-    out.extend_from_slice(format!("{:03}", cks).as_bytes());
-    out.put_u8(SOH);
+    // Write BeginString and update checksum
+    let begin_string = format!("8=FIX.4.4{}", SOH as char);
+    writer.write_all(begin_string.as_bytes()).map_err(|e| e.to_string())?;
+    for &b in begin_string.as_bytes() {
+        checksum = checksum.wrapping_add(b);
+    }
 
-    out.freeze()
+    // Write BodyLength and update checksum
+    let body_length_str = format!("9={}{}", body_length, SOH as char);
+    writer.write_all(body_length_str.as_bytes()).map_err(|e| e.to_string())?;
+    for &b in body_length_str.as_bytes() {
+        checksum = checksum.wrapping_add(b);
+    }
+
+    // Write body fields and update checksum
+    for (tag, value) in body_fields {
+        let field_str = format!("{}={}{}", tag, value, SOH as char);
+        writer.write_all(field_str.as_bytes()).map_err(|e| e.to_string())?;
+        for &b in field_str.as_bytes() {
+            checksum = checksum.wrapping_add(b);
+        }
+    }
+
+    // Calculate final checksum
+    let final_checksum = checksum % 256;
+    write!(writer, "10={:03}{}", final_checksum, SOH as char).map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 pub fn decode(buf: &[u8]) -> Result<FixMessage, String> {
     // Expect tag-value fields delimited by SOH
     // Must contain 8,9,35,...,10 in correct positions and checksum must verify
     // Find last field 10
-    if !buf.ends_with(&[SOH]) { return Err("message must end with SOH".into()); }
+    if !buf.ends_with(&[SOH]) {
+        return Err("message must end with SOH".into());
+    }
 
     // Verify checksum
     let without_trailer = &buf[..buf.len() - 1]; // strip last SOH for parsing convenience
     let mut fields: Vec<&[u8]> = without_trailer.split(|b| *b == SOH).collect();
     let trailer = fields.last().ok_or("empty message")?;
     let trailer_str = std::str::from_utf8(trailer).map_err(|_| "non-utf8 trailer")?;
-    if !trailer_str.starts_with("10=") { return Err("missing 10= trailer".into()); }
-    let expected_ck = trailer_str[3..].parse::<u8>().map_err(|_| "bad checksum value")?;
+    if !trailer_str.starts_with("10=") {
+        return Err("missing 10= trailer".into());
+    }
+    let expected_ck = trailer_str[3..]
+        .parse::<u8>()
+        .map_err(|_| "bad checksum value")?;
 
     let checksum_region_end = buf.len() - (trailer.len() + 1); // include SOH before 10
     let actual_ck = compute_checksum(&buf[..checksum_region_end]);
     if actual_ck != expected_ck {
-        return Err(format!("checksum mismatch: expected {:03}, got {:03}", expected_ck, actual_ck));
+        return Err(format!(
+            "checksum mismatch: expected {:03}, got {:03}",
+            expected_ck, actual_ck
+        ));
     }
 
     // Remove trailer from fields list
@@ -187,28 +211,48 @@ pub fn decode(buf: &[u8]) -> Result<FixMessage, String> {
     // Validate body length: recompute by re-encoding body from the first field after 9 up to before 10
     // We approximate by subtracting size of 8 and 9 fields plus their SOH from the pre-trailer portion length
     // Note: For strict validation, we would need precise offsets. Here we trust the split order preserved.
-    let mut seen_8 = false; let mut seen_9 = false; let mut body_counted = 0usize;
+    let mut seen_8 = false;
+    let mut seen_9 = false;
+    let mut body_counted = 0usize;
     for f in fields.iter() {
         let s = std::str::from_utf8(f).unwrap();
         if !seen_8 {
-            if s.starts_with("8=") { seen_8 = true; continue; }
+            if s.starts_with("8=") {
+                seen_8 = true;
+                continue;
+            }
         }
         if !seen_9 {
-            if s.starts_with("9=") { seen_9 = true; continue; }
+            if s.starts_with("9=") {
+                seen_9 = true;
+                continue;
+            }
             continue;
         }
         // from first non-9 field after encountering 9 until before 10
         body_counted += f.len() + 1; // plus SOH
     }
     let body_len_val: usize = body_len_str.parse().map_err(|_| "invalid 9 value")?;
-    if body_counted != body_len_val { return Err(format!("BodyLength mismatch: header={} computed={}", body_len_val, body_counted)); }
+    if body_counted != body_len_val {
+        return Err(format!(
+            "BodyLength mismatch: header={} computed={}",
+            body_len_val, body_counted
+        ));
+    }
 
     let msg_type = parse_msg_type(&msg_type_str);
 
     // Remove header fields (8,9,35) from map to leave only application fields
-    map.remove(&8); map.remove(&9); map.remove(&35);
+    map.remove(&8);
+    map.remove(&9);
+    map.remove(&35);
 
-    Ok(FixMessage { begin_string, body_length: body_len_val, msg_type, fields: map })
+    Ok(FixMessage {
+        begin_string,
+        body_length: body_len_val,
+        msg_type,
+        fields: map,
+    })
 }
 
 // Stream framer: extract one full FIX message if present
@@ -226,7 +270,9 @@ pub fn try_extract_one(buffer: &mut _BytesMut) -> Option<Bytes> {
     let body_start = nine_end + 1;
     // Trailer length is fixed: "10=" + 3 digits + SOH = 7
     let total_len = body_start + body_len + 7 - start;
-    if start + total_len > data.len() { return None; }
+    if start + total_len > data.len() {
+        return None;
+    }
     let msg_bytes = Bytes::copy_from_slice(&data[start..start + total_len]);
     // Advance buffer
     buffer.advance(start + total_len);
@@ -238,7 +284,11 @@ fn find_field_start(haystack: &[u8], pat: &[u8]) -> Option<usize> {
 }
 
 // Convenience constructors for admin messages
-pub fn build_logon(heart_bt_int_secs: u32, sender_comp_id: &str, target_comp_id: &str) -> FixMessage {
+pub fn build_logon(
+    heart_bt_int_secs: u32,
+    sender_comp_id: &str,
+    target_comp_id: &str,
+) -> FixMessage {
     let mut msg = FixMessage::new(FixMsgType::Logon);
     msg.set_field(49, sender_comp_id);
     msg.set_field(56, target_comp_id);
@@ -246,11 +296,17 @@ pub fn build_logon(heart_bt_int_secs: u32, sender_comp_id: &str, target_comp_id:
     msg
 }
 
-pub fn build_heartbeat(test_req_id: Option<&str>, sender_comp_id: &str, target_comp_id: &str) -> FixMessage {
+pub fn build_heartbeat(
+    test_req_id: Option<&str>,
+    sender_comp_id: &str,
+    target_comp_id: &str,
+) -> FixMessage {
     let mut msg = FixMessage::new(FixMsgType::Heartbeat);
     msg.set_field(49, sender_comp_id);
     msg.set_field(56, target_comp_id);
-    if let Some(id) = test_req_id { msg.set_field(112, id); }
+    if let Some(id) = test_req_id {
+        msg.set_field(112, id);
+    }
     msg
 }
 
@@ -266,11 +322,18 @@ pub fn build_logout(text: Option<&str>, sender_comp_id: &str, target_comp_id: &s
     let mut msg = FixMessage::new(FixMsgType::Logout);
     msg.set_field(49, sender_comp_id);
     msg.set_field(56, target_comp_id);
-    if let Some(t) = text { msg.set_field(58, t); }
+    if let Some(t) = text {
+        msg.set_field(58, t);
+    }
     msg
 }
 
-pub fn build_resend_request(begin_seq_no: u32, end_seq_no: u32, sender_comp_id: &str, target_comp_id: &str) -> FixMessage {
+pub fn build_resend_request(
+    begin_seq_no: u32,
+    end_seq_no: u32,
+    sender_comp_id: &str,
+    target_comp_id: &str,
+) -> FixMessage {
     let mut msg = FixMessage::new(FixMsgType::ResendRequest);
     msg.set_field(49, sender_comp_id);
     msg.set_field(56, target_comp_id);
@@ -279,11 +342,18 @@ pub fn build_resend_request(begin_seq_no: u32, end_seq_no: u32, sender_comp_id: 
     msg
 }
 
-pub fn build_sequence_reset(new_seq_no: u32, gap_fill: bool, sender_comp_id: &str, target_comp_id: &str) -> FixMessage {
+pub fn build_sequence_reset(
+    new_seq_no: u32,
+    gap_fill: bool,
+    sender_comp_id: &str,
+    target_comp_id: &str,
+) -> FixMessage {
     let mut msg = FixMessage::new(FixMsgType::SequenceReset);
     msg.set_field(49, sender_comp_id);
     msg.set_field(56, target_comp_id);
     msg.set_field(36, new_seq_no.to_string());
-    if gap_fill { msg.set_field(123, "Y"); }
+    if gap_fill {
+        msg.set_field(123, "Y");
+    }
     msg
 }

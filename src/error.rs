@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 /// Error types that can occur in the FIX engine.
-/// 
+///
 /// This enum represents all possible error conditions that can arise
 /// during FIX message processing, session management, and system operations.
 #[derive(Error, Debug)]
