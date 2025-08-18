@@ -27,7 +27,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: target/doc # Path to your generated docs
+          path: target/doc/fixg # Path to your generated docs
 
       - name: Deploy to GitHub Pages
         id: deployment
